@@ -1,11 +1,18 @@
 ---
 name: plan-create
 description: Create structured implementation plans for autonomous TDD development. Use for new features, multi-file changes, or anything requiring multiple steps or tests. Triggers on "build", "create", "add a feature", "help me implement", "I need to build". Do NOT use this for "implement the plan" or "run the plan" - those should use plan-orchestrate instead. Skip for quick bug fixes, single-line changes, questions, or documentation.
+argument-hint: "[feature description]"
 ---
 
 # Plan Create
 
 Transform feature requests into structured plans with task breakdowns, dependencies, and TDD requirements for parallel autonomous execution.
+
+## Project Architecture
+
+<architecture>
+@.claude/architecture.md
+</architecture>
 
 ## Execution Flow
 

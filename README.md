@@ -192,6 +192,9 @@ Requirements become test names directly.
 hcf/
 ├── .claude-plugin/
 │   └── plugin.json           # Plugin manifest
+├── agents/
+│   ├── tdd-worker.md         # TDD implementation worker (sonnet)
+│   └── standards-enforcer.md # Code standards enforcement (sonnet)
 ├── commands/
 │   └── project-setup.md      # One-time setup command
 ├── skills/
@@ -199,7 +202,7 @@ hcf/
 │   │   └── SKILL.md          # Interactive planning skill
 │   └── plan-orchestrate/
 │       └── SKILL.md          # Parallel TDD execution skill
-├── CLAUDE.md.template        # Portable CLAUDE.md for projects
+├── CLAUDE.md                 # Portable CLAUDE.md template for projects
 └── README.md
 ```
 

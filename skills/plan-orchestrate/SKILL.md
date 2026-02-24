@@ -1,6 +1,9 @@
 ---
 name: plan-orchestrate
 description: Execute implementation plans with parallel TDD workers. Use when ready to run, execute, or start a plan. Triggers on "run the plan", "execute the plan", "implement the plan", "start the plan", "start implementation", "orchestrate", "begin autonomous execution". Requires a plan created by plan-create.
+model: sonnet
+argument-hint: "[plan-name]"
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task
 ---
 
 # Plan Orchestrate
@@ -134,59 +137,44 @@ if len(ready_tasks) == 0:
 
 ### Step 4a: Code Standards Enforcement
 
-**Why this exists:** TDD workers focus on tests and implementation. Asking them to also perfectly follow every coding standard overloads the context. This dedicated pass has a single focus: standards compliance.
+**Why this exists:** TDD workers focus on tests and implementation. This dedicated pass has a single focus: standards compliance.
 
-When all tasks are complete, spawn a **single** Task tool subagent to enforce code standards on all files created or modified during plan execution.
+When all tasks are complete:
 
-**Worker Prompt Template:**
+**1. Get the list of changed files:**
+```bash
+git diff --name-only --diff-filter=ACM {starting-commit}..HEAD
+```
+
+**2. Split files into batches** of ~10 files each.
+
+**3. Spawn parallel standards-enforcer subagents** (single message with multiple Task tool calls), one per batch:
+
+```
+Use the Task tool with subagent_type="standards-enforcer" for EACH batch.
+All Task tool calls MUST be made in a SINGLE message to enable parallel execution.
+```
+
+**Worker Prompt (per batch):**
 
 ```markdown
-You are a code standards enforcer. Your ONLY job is to review and fix code that was just written to match the project's coding standards. Do NOT add features, change behavior, or refactor logic.
-
 ## Code Standards
 {pass the <code-standards> content from above}
 
-## What to Review
+## Files to Review
+{list of files in this batch, one per line}
+```
 
-Run this command to find all files created or modified during this plan:
+**4. After ALL enforcers return `BATCH_ENFORCED`, run validation:**
 ```bash
-git diff --name-only --diff-filter=ACM {starting-commit}..HEAD -- packages/
+# Run lint
+{lint command from code-standards.md or testing.md}
+
+# Run full test suite
+{parallel test command from testing.md}
 ```
 
-For each file, read it and check for violations of the code standards. Common issues to look for:
-
-1. **`readonly class` promotion** — If ALL constructor-promoted properties are individually `readonly`, change to `readonly class` and remove `readonly` from each property
-2. **No parentheses around `new` in chains** — `(new Foo())->method()` must be `new Foo()->method()`
-3. **Avoid `mixed` types** — Use the narrowest possible type instead of `mixed`
-4. **Multiline method signatures** — Every parameter on its own line with trailing comma
-5. **Constructor property promotion** — Always use it, no manual assignment
-6. **Strict types declaration** — Every file needs `declare(strict_types=1)`
-7. **Import classes** — No inline fully qualified names with `\`
-8. **No unnecessary curly braces** in string interpolation
-9. **No traits** — Use composition
-10. **`@throws` PHPDoc tags** — Every method that throws or calls throwing methods
-11. **Named parameters** for exceptions (message, context, suggestion)
-12. **No dead code** — Unused imports, variables, parameters
-13. **Anonymous class braces** — Opening brace on next line
-
-## Process
-
-1. Get the list of modified files
-2. Read each file
-3. Fix any violations (use Edit tool, not rewriting entire files)
-4. After all fixes, run the lint tools:
-   ```bash
-   {lint command from testing.md or code-standards.md}
-   ```
-5. Run the full test suite to verify fixes didn't break anything:
-   ```bash
-   {parallel test command from testing.md}
-   ```
-6. If tests pass, output: `STANDARDS_ENFORCED`
-7. If tests fail after your changes, revert the breaking fix and try again. Output: `STANDARDS_ENFORCED` when stable.
-```
-
-**On STANDARDS_ENFORCED:**
+**5. On lint/tests passing:**
 1. Create a git commit if any files were changed:
    ```bash
    git add -A && git commit -m "style({plan-name}): enforce coding standards"
@@ -194,15 +182,14 @@ For each file, read it and check for violations of the code standards. Common is
 2. Update `_plan.md` status to `completed`
 3. Output: `ALL_TASKS_COMPLETE`
 
-**On failure or timeout:**
-1. Still mark plan as `completed` (all tasks passed, standards are non-blocking)
-2. Output a warning with `ALL_TASKS_COMPLETE`:
+**6. On lint/test failure:**
+- If tests fail, investigate which enforcer's changes broke things. Revert those changes and re-run tests.
+- If tests still pass after reverting, commit the remaining fixes and continue.
+- Standards enforcement is non-blocking — if issues persist, output:
    ```
    ALL_TASKS_COMPLETE
 
-   WARNING: Code standards enforcement encountered issues. Run linting manually:
-     ./vendor/bin/phpcs
-     ./vendor/bin/php-cs-fixer fix
+   WARNING: Code standards enforcement encountered issues. Run linting manually.
    ```
 
 ### Step 5: Spawn Parallel Workers
@@ -210,18 +197,14 @@ For each file, read it and check for violations of the code standards. Common is
 For EACH ready task, spawn a Task tool subagent **in parallel** (single message with multiple Task tool calls):
 
 ```
-Use the Task tool with subagent_type="general-purpose" for EACH ready task.
-All Task tool calls should be made in a SINGLE message to enable parallel execution.
+Use the Task tool with subagent_type="tdd-worker" for EACH ready task.
+All Task tool calls MUST be made in a SINGLE message to enable parallel execution.
 ```
 
-**Worker Prompt Template:**
-
-Pass the auto-included testing and code-standards content to each worker:
+**Worker Prompt (pass to each tdd-worker):**
 
 ```markdown
-You are a TDD programmer implementing a single task. Work autonomously until complete.
-
-## Project Configuration
+## Project Testing Configuration
 {pass the <testing> content from above}
 
 ## Code Standards
@@ -229,90 +212,9 @@ You are a TDD programmer implementing a single task. Work autonomously until com
 
 ## Your Task
 {contents of the task file}
-
-## TDD Process (STRICT)
-
-Use the test commands from the project's testing.md. Look for "TDD Workflow Commands" section for optimized commands (RED/GREEN/REFACTOR phases). If not present, use the standard test command.
-
-For EACH unchecked requirement in order:
-
-1. **RED**: Write a failing test
-   - Test name MUST match the requirement exactly
-   - Run tests with filter/bail flags if available (fast failure confirmation)
-   - Verify test FAILS
-   - **CRITICAL**: If test passes immediately, you over-implemented in a previous step. Note this and move on.
-
-2. **GREEN**: Write the BARE MINIMUM code to pass
-   - Only write enough code to make THIS test pass - nothing more
-   - Do NOT handle edge cases that aren't tested yet
-   - Do NOT implement other requirements yet
-   - Run tests using the parallel test command from `.claude/testing.md` (always use parallel)
-   - Verify ALL package tests pass
-
-3. **REFACTOR** (Tidy First): Clean up while tests stay green
-   - Separate STRUCTURAL changes (renaming, extracting methods, moving code) from BEHAVIORAL changes
-   - Make structural changes first if both are needed
-   - One refactoring change at a time
-   - Run package-scoped tests after EACH change
-   - Prioritize: eliminate duplication, improve clarity, make dependencies explicit
-
-4. **MARK COMPLETE**: Update the task file
-   - Change `- [ ]` to `- [x]` for this requirement
-   - Add implementation notes if relevant
-
-5. **REPEAT**: Move to next unchecked requirement
-
-## Critical TDD Rules
-
-**Avoid Over-Implementation:**
-- NEVER write code that handles multiple cases at once
-- Each test must fail before you write the code that makes it pass
-- If a test passes immediately, you wrote too much implementation
-- The simplest solution that could possibly work is the correct one
-
-**One Requirement at a Time:**
-- ONE requirement at a time - never skip ahead
-- NEVER write implementation code before a failing test exists
-- If a test already passes, note it and move to next requirement
-
-**Code Quality (apply during REFACTOR):**
-- Eliminate duplication ruthlessly (DRY)
-- Keep methods small and focused (single responsibility)
-- Express intent clearly through naming
-- Make dependencies explicit
-- Minimize state and side effects
-
-**General:**
-- Follow the code standards strictly
-- Use existing patterns from the codebase
-- Write code for production - tests adapt to code, not the other way around
-
-## Output Format
-
-During execution, show your progress:
-```
-Requirement 1: `{test name}`
-  RED: Writing failing test...
-  Running tests... FAILED (expected)
-  GREEN: Implementing...
-  Running tests... PASSED
-  Marked [x]
-
-Requirement 2: `{test name}`
-  ...
 ```
 
-## When Complete
-
-After ALL requirements are [x]:
-1. Run full test suite using the parallel test command from `.claude/testing.md`
-2. Verify all tests pass
-3. Output exactly: `TASK_COMPLETE`
-
-If you encounter an unrecoverable error:
-1. Document the error in Implementation Notes
-2. Output exactly: `TASK_FAILED: {brief reason}`
-```
+The tdd-worker agent already has all TDD methodology and rules. The prompt needs the project-specific configuration and task details since subagents do not inherit CLAUDE.md context.
 
 ### Step 6: Collect Results
 
