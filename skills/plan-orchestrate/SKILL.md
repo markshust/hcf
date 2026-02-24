@@ -96,12 +96,6 @@ If plan status is `ready`, change to `in_progress`:
 - Edit `.claude/plans/{plan-name}/_plan.md`
 - Set `## Status` to `in_progress`
 
-Capture the starting commit hash for later use in Step 4a:
-```bash
-git rev-parse HEAD
-```
-Store this as `{starting-commit}` — it's used to identify files changed during plan execution.
-
 ### Step 3: Find Ready Tasks
 
 A task is **ready** when:
@@ -141,10 +135,12 @@ if len(ready_tasks) == 0:
 
 When all tasks are complete:
 
-**1. Get the list of changed files:**
+**1. Stage all implementation changes and get the file list:**
 ```bash
-git diff --name-only --diff-filter=ACM {starting-commit}..HEAD
+git add -A
+git diff --name-only --cached
 ```
+This stages all implementation work (nothing has been committed yet) and lists the changed files. The staged snapshot preserves the boundary between implementation and standards fixes.
 
 **2. Split files into batches** of ~10 files each.
 
@@ -157,9 +153,17 @@ All Task tool calls MUST be made in a SINGLE message to enable parallel executio
 
 **Worker Prompt (per batch):**
 
+> **CRITICAL: Pass the COMPLETE, VERBATIM content of the `<code-standards>` and `<testing>` tags above.
+> Do NOT summarize, condense, or paraphrase. The full documents contain nuanced rules
+> (e.g., `@throws` requirements, `readonly` patterns, expectation chaining) that are lost when summarized.
+> Copy-paste the entire content between the tags.**
+
 ```markdown
 ## Code Standards
-{pass the <code-standards> content from above}
+{paste the COMPLETE content of <code-standards> verbatim — do NOT summarize}
+
+## Testing Standards
+{paste the COMPLETE content of <testing> verbatim — do NOT summarize}
 
 ## Files to Review
 {list of files in this batch, one per line}
@@ -174,23 +178,33 @@ All Task tool calls MUST be made in a SINGLE message to enable parallel executio
 {parallel test command from testing.md}
 ```
 
+> **CRITICAL: Nothing is committed until AFTER the full test suite passes.** This ensures no non-standard or broken code is ever committed.
+
 **5. On lint/tests passing:**
-1. Create a git commit if any files were changed:
+1. Commit the staged implementation changes (staged before standards enforcement ran):
    ```bash
-   git add -A && git commit -m "style({plan-name}): enforce coding standards"
+   git commit -m "feat({plan-name}): {plan title summary}"
    ```
-2. Update `_plan.md` status to `completed`
-3. Output: `ALL_TASKS_COMPLETE`
+2. If standards enforcement made additional changes (unstaged), commit them:
+   ```bash
+   git add -A && git diff --cached --quiet || git commit -m "style({plan-name}): apply coding standards"
+   ```
+3. Update `_plan.md` status to `completed`
+4. Output: `ALL_TASKS_COMPLETE`
 
 **6. On lint/test failure:**
-- If tests fail, investigate which enforcer's changes broke things. Revert those changes and re-run tests.
-- If tests still pass after reverting, commit the remaining fixes and continue.
-- Standards enforcement is non-blocking — if issues persist, output:
+- If tests fail, first check if standards enforcement broke things by reverting unstaged changes:
+   ```bash
+   git checkout -- .
+   ```
+   Then re-run the test suite on just the staged implementation.
+- If implementation tests pass: commit implementation, skip standards fixes, and output:
    ```
    ALL_TASKS_COMPLETE
 
-   WARNING: Code standards enforcement encountered issues. Run linting manually.
+   WARNING: Code standards enforcement broke tests. Implementation committed without style fixes. Run linting manually.
    ```
+- If implementation tests also fail: a TDD worker produced broken code. Output `TASKS_BLOCKED` with details.
 
 ### Step 5: Spawn Parallel Workers
 
@@ -203,12 +217,15 @@ All Task tool calls MUST be made in a SINGLE message to enable parallel executio
 
 **Worker Prompt (pass to each tdd-worker):**
 
+> **CRITICAL: Pass the COMPLETE, VERBATIM content of the `<testing>` and `<code-standards>` tags above.
+> Do NOT summarize. Subagents have no access to CLAUDE.md or project files beyond what you provide.**
+
 ```markdown
 ## Project Testing Configuration
-{pass the <testing> content from above}
+{paste the COMPLETE content of <testing> verbatim — do NOT summarize}
 
 ## Code Standards
-{pass the <code-standards> content from above}
+{paste the COMPLETE content of <code-standards> verbatim — do NOT summarize}
 
 ## Your Task
 {contents of the task file}
@@ -223,11 +240,9 @@ Wait for ALL parallel Task tool calls to complete. For each result:
 **On TASK_COMPLETE:**
 1. Verify all requirements are checked in task file
 2. Set task status to `completed`
-3. Create a git commit:
-   ```bash
-   git add -A && git commit -m "feat({plan-name}): {task title}"
-   ```
-4. Update the task table in `_plan.md`
+3. Update the task table in `_plan.md`
+
+> **NOTE:** Do NOT commit here. All commits are deferred to Step 4a, after standards enforcement and the full test suite pass. This ensures no non-standard code is ever committed.
 
 **On TASK_FAILED:**
 1. Increment retry count in task file
