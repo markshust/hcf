@@ -128,6 +128,15 @@ Create the `.claude/` directory and all config files:
 mkdir -p .claude
 ```
 
+**Add `.claude/ralph-loop.local.md` to `.gitignore`:**
+
+Check if `.gitignore` exists and whether it already contains the entry. If not, append it:
+
+```bash
+# Ensure ralph-wiggum local state is gitignored
+grep -qxF '.claude/ralph-loop.local.md' .gitignore 2>/dev/null || echo '.claude/ralph-loop.local.md' >> .gitignore
+```
+
 > **Note**: The templates below show the minimum required sections. Expand each file with additional relevant details based on project complexity. For example, a framework project might include extensive architecture docs, while a simple app might stick closer to the minimum.
 
 **Create `.claude/project-overview.md`:**
