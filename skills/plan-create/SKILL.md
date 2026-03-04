@@ -157,9 +157,35 @@ Show the user a simple dependency tree:
      └─► 004 ────► 006
 ```
 
-### Phase 5: Review with User
+### Phase 5: Devil's Advocate Review
 
-Present the complete plan:
+After validating dependencies, automatically run a devil's advocate review to stress-test the plan before presenting it to the user.
+
+**Spawn a devils-advocate subagent:**
+
+Use the Agent tool with `subagent_type="devils-advocate"` and pass the plan name and project context.
+
+**The subagent prompt must include:**
+1. The plan name (so it knows the directory path)
+2. The project's architecture context:
+
+```
+## Project Architecture
+{paste the COMPLETE content of <architecture> verbatim}
+```
+
+The subagent will:
+1. Read all task files and the `_plan.md`
+2. Cross-reference against project source and architecture
+3. Write findings to `.claude/plans/{plan-name}/_devils_advocate.md`
+4. **Auto-apply** all Critical and Important fixes directly to task files and `_plan.md`
+5. Return a summary of what changed
+
+**After the subagent completes**, read the updated plan files and the `_devils_advocate.md` to prepare the recap for the user.
+
+### Phase 6: Review with User
+
+Present the refined plan along with what the devil's advocate changed:
 
 > Here's the plan I've created for **{feature name}**:
 >
@@ -172,6 +198,20 @@ Present the complete plan:
 > | 002 | {title} | 001 |
 > | ... | ... | ... |
 >
+> **Devil's Advocate Review**
+>
+> The plan was automatically stress-tested before presenting it to you. Here's what was refined:
+>
+> {summarize the Critical and Important changes that were applied, e.g.:}
+> - Added missing dependency: task 005 now depends on 003 (shared interface needed)
+> - Split task 008 into 008 and 009 (too large for single TDD cycle)
+> - Added edge case requirements to task 004 (empty state handling)
+> - Fixed method signature in task 012 (verified against source)
+>
+> {if there are Minor items or Questions from the review, list them:}
+> **Items for your consideration:**
+> - {Minor or Question items the user may want to weigh in on}
+>
 > Does this breakdown look correct? Would you like to:
 > 1. Approve and proceed
 > 2. Add/remove tasks
@@ -180,7 +220,7 @@ Present the complete plan:
 
 Make adjustments based on feedback.
 
-### Phase 6: Finalize
+### Phase 7: Finalize
 
 Once approved:
 
