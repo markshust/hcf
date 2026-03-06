@@ -70,6 +70,7 @@ The `plan-create` skill activates automatically to:
 - Break down into tasks with dependencies
 - Write requirements as test descriptions
 - Create `.claude/plans/user-auth/` with task files
+- Run a **devil's advocate** review to find gaps and issues before execution
 
 After planning completes, you'll be asked:
 > Ready to begin autonomous implementation?
@@ -100,6 +101,7 @@ ralph-wiggum is prompted during `/project-setup`, or install manually:
 |-------|------|--------------|
 | Setup | One-time | Configure project for autonomous dev |
 | Planning | Interactive | Define tasks with human guidance |
+| Review | Automated | Devil's advocate finds gaps in the plan |
 | Execution | Autonomous | Parallel TDD implementation |
 
 ### Parallel Execution
@@ -193,6 +195,7 @@ hcf/
 ├── .claude-plugin/
 │   └── plugin.json           # Plugin manifest
 ├── agents/
+│   ├── devils-advocate.md    # Plan reviewer - finds gaps before execution (opus)
 │   ├── tdd-worker.md         # TDD implementation worker (sonnet)
 │   └── standards-enforcer.md # Code standards enforcement (sonnet)
 ├── commands/
