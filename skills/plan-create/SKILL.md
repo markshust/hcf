@@ -37,6 +37,16 @@ Keep questions focused and relevant to the specific feature. Your goal is to flu
 
 Once you understand the requirements, create the plan overview:
 
+**Create feature branch:**
+```bash
+git checkout -b feature/{plan-name}
+```
+
+If the branch already exists (resuming a plan), check it out instead:
+```bash
+git checkout feature/{plan-name}
+```
+
 **Create plan directory:**
 ```bash
 mkdir -p .claude/plans/{plan-name}

@@ -31,6 +31,18 @@ ls .claude/plans/{plan-name}/_plan.md .claude/testing.md 2>/dev/null
 
 If not found, output error and stop.
 
+4. Must be on the correct feature branch
+
+Verify the current branch matches `feature/{plan-name}`:
+```bash
+git branch --show-current
+```
+
+If the current branch is not `feature/{plan-name}`:
+- Output an error explaining which branch is expected
+- Ask the user if they'd like to check out `feature/{plan-name}`
+- Do NOT proceed until on the correct branch
+
 ## Project Configuration
 
 <testing>
@@ -344,6 +356,18 @@ completed task titles and the plan objective. For example:}
 
 > **NOTE:** The "What Changed" section should read like release notes — focus on outcomes,
 > not internals. Pull from the plan's objective and completed task summaries.
+
+After displaying the success output, prompt the user about pushing and creating a PR:
+
+```
+Would you like to push this branch and create a pull request?
+
+1. **Yes, push and create PR** - I'll push feature/{plan-name} and open a PR
+2. **Just push** - I'll push the branch, you can create the PR later
+3. **No thanks** - Keep everything local for now
+```
+
+**Never push or create a PR without the user's explicit permission.** Wait for their response before taking action. If they choose option 1, push and use `gh pr create` with a summary derived from the plan objective and "What Changed" section.
 
 **Blocked:**
 ```
