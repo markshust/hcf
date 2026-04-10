@@ -67,6 +67,7 @@ Just describe what you want:
 ```
 
 The `plan-create` skill activates automatically to:
+- Create a `feature/{plan-name}` branch for the work
 - Ask clarifying questions about requirements
 - Break down into tasks with dependencies
 - Write requirements as test descriptions
@@ -86,7 +87,9 @@ If you chose "later" or want to re-run, say:
 "Run the user-auth plan" or "Execute the plan"
 ```
 
-The `plan-orchestrate` skill auto-triggers and **automatically uses ralph-wiggum** for session persistence if installed. If not installed, you'll see a warning but execution continues.
+The `plan-orchestrate` skill auto-triggers. It verifies you're on the correct `feature/{plan-name}` branch before starting, and **automatically uses ralph-wiggum** for session persistence if installed. If not installed, you'll see a warning but execution continues.
+
+After completion, you'll be prompted to push the branch and create a PR (never done without your permission).
 
 ralph-wiggum is prompted during `/project-setup`, or install manually:
 ```bash
@@ -375,6 +378,10 @@ claude --plugin-dir ./hcf --plugin-dir ./other-plugin
 3. Test locally with `--plugin-dir`
 4. Submit a pull request
 
+## Credits
+
+Created by [Mark Shust](https://markshust.com)
+
 ## License
 
-MIT
+HCF is open-source software licensed under the [MIT License](LICENSE).
