@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "hcf",
-      "source": ".",
+      "source": "./",
       "description": "Autonomous development orchestration with parallel TDD execution",
       "version": "1.0.0",
       "homepage": "https://github.com/markshust/hcf",
