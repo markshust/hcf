@@ -1,0 +1,19 @@
+{
+  "name": "hcf",
+  "owner": {
+    "name": "Mark Shust",
+    "email": "mark@shust.com",
+    "url": "https://github.com/markshust"
+  },
+  "plugins": [
+    {
+      "name": "hcf",
+      "source": ".",
+      "description": "Autonomous development orchestration with parallel TDD execution",
+      "version": "1.0.0",
+      "homepage": "https://github.com/markshust/hcf",
+      "license": "MIT",
+      "keywords": ["tdd", "autonomous", "orchestration", "planning", "agents"]
+    }
+  ]
+}

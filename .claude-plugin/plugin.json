@@ -3,6 +3,12 @@
   "version": "1.0.0",
   "description": "Autonomous development orchestration with parallel TDD execution",
   "author": {
-    "name": "Mark Shust"
-  }
+    "name": "Mark Shust",
+    "email": "mark@shust.com",
+    "url": "https://github.com/markshust"
+  },
+  "homepage": "https://github.com/markshust/hcf",
+  "repository": "https://github.com/markshust/hcf",
+  "license": "MIT",
+  "keywords": ["tdd", "autonomous", "orchestration", "planning", "agents"]
 }
