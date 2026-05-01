@@ -1,6 +1,6 @@
 {
   "name": "hcf",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Autonomous development orchestration with parallel TDD execution",
   "author": {
     "name": "Mark Shust",

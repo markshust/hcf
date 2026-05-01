@@ -277,11 +277,11 @@ Configure which agents run at each phase of the development workflow. Each entry
 - devils-advocate
 
 ## post-implementation
-- standards-enforcer
+<!-- - standards-enforcer -->
 ```
 
 Tell the user:
-> **Pipeline configured** with default agents (devil's advocate + standards enforcer).
+> **Pipeline configured** with `devils-advocate` enabled in `post-plan`. The `post-implementation` phase has `standards-enforcer` available but commented out by default — uncomment in `.claude/pipeline.md` if you want code-standards enforcement to run on changed files before commit.
 > You can customize `.claude/pipeline.md` to add, remove, or reorder agents at each phase.
 > Custom agents go in `.claude/agents/` — see the HCF README for details.
 

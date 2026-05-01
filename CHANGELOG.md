@@ -4,6 +4,11 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-05-01
+
+### Changed
+- `standards-enforcer` is now commented out by default in the `post-implementation` pipeline. The agent uses substantial tokens and isn't mission-critical for most users; uncomment in `.claude/pipeline.md` to re-enable code-standards enforcement on changed files before commit.
+
 ## [1.1.0] — 2026-05-01
 
 ### Added
@@ -36,6 +41,7 @@ Initial public release.
 - **GitHub issue linking** — `plan-create` captures issue references (`Closes #N`, `Relates to #N`) and `plan-orchestrate` includes them in PR bodies for auto-close on merge.
 - MIT license.
 
-[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v1.1.0...HEAD
+[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v1.1.1...HEAD
+[1.1.1]: https://github.com/markshust/hcf/compare/hcf--v1.1.0...hcf--v1.1.1
 [1.1.0]: https://github.com/markshust/hcf/compare/hcf--v1.0.0...hcf--v1.1.0
 [1.0.0]: https://github.com/markshust/hcf/releases/tag/hcf--v1.0.0

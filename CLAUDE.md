@@ -39,7 +39,8 @@ This repo is a Claude Code plugin published via its own marketplace manifest. To
 2. Bump `version` in **both** `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (must match).
 3. Commit the changelog + version bump along with any feature changes.
 4. Run `claude plugin tag --push` — this auto-generates a tag in the form `hcf--v{version}` (note the **double dash** between plugin name and `v`) and pushes it to the remote.
-5. Users update via `/plugin install hcf@hcf` and must run `/reload-plugins` for the new version to take effect.
+5. (Optional) Mirror the new CHANGELOG entry to GitHub Releases: `gh release create hcf--v{version} --title "hcf--v{version}" --notes-file <changelog-section> --latest`. **Always pass `--latest`** — without it, GitHub picks the "Latest" badge by creation timestamp, which is wrong if you ever create a retroactive release for an older tag.
+6. Users update via `/plugin install hcf@hcf` and must run `/reload-plugins` for the new version to take effect.
 
 **Versioning:** semver. New phases / agents / skills = minor bump. Removing a generated file (e.g., dropping `project-overview.md` from setup) is treated as minor since existing user data isn't destroyed.
 

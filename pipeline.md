@@ -4,4 +4,5 @@
 - devils-advocate
 
 ## post-implementation
-- standards-enforcer
+<!-- - standards-enforcer -->
+

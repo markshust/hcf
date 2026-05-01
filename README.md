@@ -126,7 +126,7 @@ The pipeline system controls which agents run before and after the core TDD impl
 - devils-advocate
 
 ## post-implementation
-- standards-enforcer
+<!-- - standards-enforcer -->
 ```
 
 **Phases:**
@@ -134,11 +134,11 @@ The pipeline system controls which agents run before and after the core TDD impl
 | Phase | When | Default Agent |
 |-------|------|---------------|
 | `post-plan` | After plan creation, before user review | `devils-advocate` |
-| `post-implementation` | After all TDD workers complete, before commit | `standards-enforcer` |
+| `post-implementation` | After all TDD workers complete, before commit | none (`standards-enforcer` available, off by default) |
 
 **Customizing the pipeline:**
 
-Add, remove, or reorder agents at any phase. For example, to add documentation updates and skip standards enforcement:
+Add, remove, or reorder agents at any phase. For example, to add a custom `security-reviewer` to post-plan, enable the built-in `standards-enforcer` (off by default), and add a custom `doc-updater` to post-implementation:
 
 ```markdown
 # Pipeline
@@ -148,6 +148,7 @@ Add, remove, or reorder agents at any phase. For example, to add documentation u
 - security-reviewer
 
 ## post-implementation
+- standards-enforcer
 - doc-updater
 ```
 
