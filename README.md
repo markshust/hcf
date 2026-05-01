@@ -25,6 +25,7 @@ Autonomous development plugin for Claude Code. Define requirements with a PM, th
   - [Local Testing](#local-testing)
   - [Testing Workflow](#testing-workflow)
   - [Debugging](#debugging)
+- [Changelog](#changelog)
 - [Contributing](#contributing)
 - [Learn the Workflow](#learn-the-workflow)
 - [License](#license)
@@ -376,12 +377,17 @@ claude --plugin-dir ./hcf --plugin-dir ./other-plugin
 - Each skill is a directory with a `SKILL.md` entrypoint
 - Skills auto-trigger based on their `description` frontmatter (unless `disable-model-invocation: true`)
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history. New user-visible changes are added to the `[Unreleased]` section as they land and moved into a versioned section at release time.
+
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
 3. Test locally with `--plugin-dir`
-4. Submit a pull request
+4. Add an entry to the `[Unreleased]` section of `CHANGELOG.md` if your change is user-visible
+5. Submit a pull request
 
 ## Credits
 
