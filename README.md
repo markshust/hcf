@@ -27,7 +27,6 @@ Autonomous development plugin for Claude Code. Define requirements with a PM, th
   - [Debugging](#debugging)
 - [Changelog](#changelog)
 - [Contributing](#contributing)
-- [Learn the Workflow](#learn-the-workflow)
 - [License](#license)
 
 ## Overview
@@ -393,10 +392,6 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release history. New user-visible 
 ## Credits
 
 Created by [Mark Shust](https://markshust.com)
-
-## Learn the Workflow
-
-HCF is the running case study in my [AI Workflow Cohort](https://shu.st/4kYuIy), a 5-week program to learn how to architect custom workflows for AI-assisted development.
 
 ## License
 
