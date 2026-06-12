@@ -82,6 +82,20 @@ Present in this order:
 - Each "must answer" should be a decision that, if assumed wrong, would force a rewrite. Each "will default" should be safe to assume with a stated default the user can override.
 - If the Phase 1 quick scope check determined the ask was already concrete, skip to Phase 3 with no questions asked.
 
+### Resolve Plans Directory
+
+Before Phase 3, resolve the plans directory once and reuse the result everywhere:
+
+```bash
+PLANS_DIR=$(jq -r '.plansDir // ".claude/plans"' .claude/hcf.json 2>/dev/null || echo ".claude/plans")
+[ -z "$PLANS_DIR" ] && PLANS_DIR=".claude/plans"
+case "$PLANS_DIR" in /*|..*|*/..*) PLANS_DIR=".claude/plans";; esac
+```
+
+If `.claude/hcf.json` exists and contains a `plansDir` key, use its value. If the file is missing, unreadable, or the key is absent, fall back to `.claude/plans`. Absolute paths and any `..` segment are also rejected and fall back to the default.
+
+Use `$PLANS_DIR/{plan-name}/...` in every subsequent path.
+
 ### Phase 3: Define the Plan
 
 Once you understand the requirements, create the plan overview:
@@ -98,7 +112,7 @@ git checkout feature/{plan-name}
 
 **Create plan directory:**
 ```bash
-mkdir -p .claude/plans/{plan-name}
+mkdir -p $PLANS_DIR/{plan-name}
 ```
 
 Use a kebab-case name derived from the feature (e.g., `user-authentication`, `payment-processing`).
@@ -235,7 +249,13 @@ Parse the `## post-plan` section from the `<pipeline>` context included in CLAUD
 Use the Agent tool with `subagent_type="{agent-name}"` and pass the plan name and project context.
 
 **The subagent prompt must include:**
-1. The plan name (so it knows the directory path)
+1. The concrete resolved plan directory (so it has the exact path without needing to read `hcf.json`):
+
+```
+## Plan Directory
+$PLANS_DIR/{plan-name}
+```
+
 2. The project's architecture context:
 
 ```
@@ -301,7 +321,7 @@ Once approved:
 ```
 Plan created: {plan-name}
 
-Location: .claude/plans/{plan-name}/
+Location: $PLANS_DIR/{plan-name}/
 Total tasks: {N}
 Independent tasks (batch 1): {count of tasks with no dependencies}
 ```

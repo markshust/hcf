@@ -19,6 +19,8 @@ Autonomous development plugin for Claude Code. Define requirements with a PM, th
   - [Task Format](#task-format)
   - [Skills](#skills)
   - [Outputs](#outputs)
+- [Advanced Configuration](#advanced-configuration)
+  - [Plans Directory](#plans-directory)
 - [Architecture](#architecture)
 - [Design Principles](#design-principles)
 - [Development](#development)
@@ -227,7 +229,7 @@ Each task follows strict Red → Green → Refactor:
 | `architecture.md` | Directory structure, patterns |
 | `pipeline.md` | Workflow agent configuration |
 
-#### Plans (`.claude/plans/{name}/`)
+#### Plans (`.claude/plans/{name}/`, configurable via `.claude/hcf.json`)
 
 | File | Purpose |
 |------|---------|
@@ -273,6 +275,30 @@ All skills can be invoked directly with `/skill-name` or triggered automatically
 |--------|---------|
 | `ALL_TASKS_COMPLETE` | Plan finished successfully |
 | `TASKS_BLOCKED: [003, 007]` | Some tasks failed after retries |
+
+## Advanced Configuration
+
+HCF works out of the box with no extra config. The options below are for power users who need to customize behavior.
+
+### Plans Directory
+
+By default, HCF stores plan files in `.claude/plans/`. You can override this with an optional config file at `.claude/hcf.json`:
+
+```json
+{
+  "plansDir": "docs/plans"
+}
+```
+
+`plansDir` is a path relative to the project root. If the key is absent, the file is missing, or the value is invalid, HCF falls back to `.claude/plans`.
+
+**Rules for `plansDir`:**
+- Must be a relative path inside the repo.
+- Absolute paths (starting with `/`) and any path containing `..` are invalid and will be ignored with a silent fallback to `.claude/plans`.
+
+**No skill ever creates or modifies `.claude/hcf.json`.** Regular users can ignore this file entirely; it exists only when you create it.
+
+**Caveat:** changing `plansDir` after plans already exist means moving the existing plan folders manually. HCF does not migrate them. Keep the plans directory git-tracked (not gitignored) since plan files are committed with the work.
 
 ## Architecture
 

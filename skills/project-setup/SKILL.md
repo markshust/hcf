@@ -132,6 +132,8 @@ Create the `.claude/` directory and all config files:
 mkdir -p .claude
 ```
 
+> **Advanced configuration note**: `.claude/hcf.json` is an optional, user-owned config file. Setup never creates, modifies, or asks about it. If it already exists, leave it untouched. Advanced users create it manually to configure options such as a custom plans directory.
+
 **Add `.claude/ralph-loop.local.md` to `.gitignore`:**
 
 Check if `.gitignore` exists and whether it already contains the entry. If not, append it:

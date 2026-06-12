@@ -18,15 +18,27 @@ plan-orchestrate {plan-name}
 
 Example: `plan-orchestrate user-auth`
 
+## Resolve Plans Directory
+
+Before checking prerequisites, resolve the plans directory once. If `.claude/hcf.json` exists and contains a `plansDir` key, use its value; otherwise use `.claude/plans` as the default.
+
+```bash
+PLANS_DIR=$(jq -r '.plansDir // ".claude/plans"' .claude/hcf.json 2>/dev/null || echo ".claude/plans")
+[ -z "$PLANS_DIR" ] && PLANS_DIR=".claude/plans"
+case "$PLANS_DIR" in /*|..*|*/..*) PLANS_DIR=".claude/plans";; esac
+```
+
+Use `$PLANS_DIR/{plan-name}/...` in every subsequent path reference.
+
 ## Prerequisites
 
-1. Plan must exist at `.claude/plans/{plan-name}/`
+1. Plan must exist at `$PLANS_DIR/{plan-name}/`
 2. Project must be configured (`.claude/testing.md` exists)
 3. Plan status must be `ready` or `in_progress`
 
 Check prerequisites:
 ```bash
-ls .claude/plans/{plan-name}/_plan.md .claude/testing.md 2>/dev/null
+ls $PLANS_DIR/{plan-name}/_plan.md .claude/testing.md 2>/dev/null
 ```
 
 If not found, output error and stop.
@@ -85,8 +97,8 @@ Before starting execution, check if the ralph-wiggum plugin is installed by look
 ### Step 1: Load Plan Context
 
 Read plan files:
-- `.claude/plans/{plan-name}/_plan.md` - Plan overview
-- `.claude/plans/{plan-name}/*.md` - All task files (excluding _plan.md)
+- `$PLANS_DIR/{plan-name}/_plan.md` - Plan overview
+- `$PLANS_DIR/{plan-name}/*.md` - All task files (excluding _plan.md)
 
 Note: Testing and code standards are auto-included above.
 
@@ -102,7 +114,7 @@ Build a dependency graph as a data structure.
 ### Step 2: Update Plan Status
 
 If plan status is `ready`, change to `in_progress`:
-- Edit `.claude/plans/{plan-name}/_plan.md`
+- Edit `$PLANS_DIR/{plan-name}/_plan.md`
 - Set `## Status` to `in_progress`
 
 ### Step 3: Find Ready Tasks
@@ -200,10 +212,10 @@ Pass the plan name, changed files list, and any relevant project context.
 First, update `_plan.md` status to `completed`. Then stage and commit everything together in a **single commit**:
 ```bash
 # 1. Update plan status BEFORE committing
-# (edit .claude/plans/{plan-name}/_plan.md — set Status to "completed")
+# (edit $PLANS_DIR/{plan-name}/_plan.md — set Status to "completed")
 
 # 2. Stage everything: implementation + pipeline agent fixes + plan files (including updated status)
-git add -A .claude/plans/{plan-name}/
+git add -A $PLANS_DIR/{plan-name}/
 git add -A
 git commit -m "feat({plan-name}): {plan title summary}"
 ```
@@ -245,6 +257,9 @@ All Task tool calls MUST be made in a SINGLE message to enable parallel executio
 
 ## Code Standards
 {paste the COMPLETE content of <code-standards> verbatim — do NOT summarize}
+
+## Task File Path
+{absolute or repo-relative path to this task's .md file, e.g. $PLANS_DIR/{plan-name}/{task-file}.md}
 
 ## Your Task
 {contents of the task file}

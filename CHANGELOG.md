@@ -4,6 +4,9 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+### Added
+- **Configurable plans directory** via optional `.claude/hcf.json` (key: `plansDir`). Defaults to `.claude/plans`; no skill creates or modifies the file, so regular users see zero change. Absolute paths and `..` segments are rejected with a silent fallback to the default. Changing `plansDir` after plans exist requires moving existing plan folders manually.
+
 ## [1.1.1] — 2026-05-01
 
 ### Changed

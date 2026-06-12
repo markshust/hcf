@@ -65,6 +65,33 @@ Read the project's `CLAUDE.md` and verify it references the `.claude/` config fi
 
 Note any missing references.
 
+### Step 5b: Validate hcf.json (if present)
+
+`.claude/hcf.json` is an optional advanced configuration file that users create manually. Its absence is the normal case and must never be flagged or prompt a suggestion to create it.
+
+If `.claude/hcf.json` exists:
+
+1. Read and parse its contents.
+2. Extract the `plansDir` value.
+3. Apply each check below and collect any warnings. Use ⚠ for all findings here: nothing in this step is auto-fixable.
+
+**Check A: containment rule**
+
+If `plansDir` is an absolute path (starts with `/`) or contains `..` segments, add:
+> ⚠ `.claude/hcf.json` — `plansDir` value "{value}" is invalid (absolute path or `..` segment). HCF will fall back to `.claude/plans`.
+
+**Check B: directory existence**
+
+If `plansDir` passes Check A but the directory it references does not exist, add:
+> ⚠ `.claude/hcf.json` — `plansDir` "{value}" does not exist. Create it or correct the path.
+
+**Check C: stale default plans**
+
+If `plansDir` passes Check A and differs from `.claude/plans`, check whether `.claude/plans` still contains any subdirectories. If it does, add:
+> ⚠ `.claude/hcf.json` — `plansDir` is set to "{value}" but `.claude/plans` still contains plan folders. Move them to "{value}" or remove them if they are no longer needed.
+
+Never create, modify, or suggest creating `.claude/hcf.json`. Only report.
+
 ### Step 6: Report and Confirm
 
 Output a summary of everything found, using ✓ for current items, ✗ for items that need fixing, and ⚠ for items that need user attention:
@@ -90,7 +117,12 @@ CLAUDE.md References:
   ✓ testing.md — referenced
   ✓ code-standards.md — referenced
   ✓ architecture.md — referenced
+
+Advanced Config:
+  ✓ .claude/hcf.json — present (plansDir: ".claude/my-plans")
 ```
+
+If `.claude/hcf.json` is absent, omit the "Advanced Config" section entirely. Never list it as missing or suggest creating it.
 
 If there are any ✗ or ⚠ items, ask the user:
 > I found {N} items that need attention. Want me to fix them? I'll walk you through each one.
