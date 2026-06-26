@@ -57,7 +57,3 @@ This repo is a Claude Code plugin published via its own marketplace manifest. To
 <code-standards>
 @.claude/code-standards.md
 </code-standards>
-
-<pipeline>
-@.claude/pipeline.md
-</pipeline>
