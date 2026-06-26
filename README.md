@@ -111,69 +111,88 @@ ralph-wiggum is prompted during `/project-setup`, or install manually:
 |-------|------|--------------|
 | Setup | One-time | Configure project for autonomous dev |
 | Planning | Interactive | Discover codebase, brainstorm scope, then define tasks with human guidance |
-| Post-Plan Pipeline | Automated | Configurable agents review the plan |
-| Execution | Autonomous | Parallel TDD implementation + post-implementation pipeline |
+| Post-Plan Hooks | Automated | Agents enrolled at the `post-plan` hook review the plan |
+| Execution | Autonomous | Parallel TDD implementation, with agents enrolled at the implementation hooks |
 
 ### Pipeline
 
-The pipeline system controls which agents run before and after the core TDD implementation. It's configured in `.claude/pipeline.md`:
+The pipeline controls which agents run at fixed points in the plan/implementation flow. HCF uses **convention over configuration**: there is no central registry — each agent enrolls itself by declaring a `phase` in its own YAML frontmatter. If an agent declares a `phase`, it runs at that hook; if it has no `phase`, it never runs via a hook.
 
-```markdown
-# Pipeline
+**Hook points:**
 
-## post-plan
-- devils-advocate
+There are exactly **8** hook points where enrolled agents can run:
 
-## post-implementation
-<!-- - standards-enforcer -->
+| Hook | Fires |
+|------|-------|
+| `pre-plan` | Before planning Discovery begins |
+| `post-plan` | After the plan is built and validated, before user review |
+| `pre-implementation` | Before the first implementation batch |
+| `pre-batch` | Before each batch of TDD workers is spawned |
+| `post-batch` | After each batch of TDD workers completes |
+| `post-implementation` | After all tasks complete |
+| `pre-commit` | After the full test suite passes, before the commit |
+| `post-commit` | After the commit, before the push/PR prompt |
+
+By default, only `devils-advocate` is enrolled (at `post-plan`). See **[HOOKS.md](HOOKS.md)** for the authoritative reference — the full frontmatter schema, the deterministic discovery routine, and tie-break/ordering rules.
+
+**Enrollment frontmatter:**
+
+An agent enrolls by adding three keys to its frontmatter:
+
+```yaml
+---
+name: devils-advocate
+description: "..."
+model: opus
+tools: Read, Write, Edit, Glob, Grep
+# --- hook enrollment ---
+phase: post-plan   # one of the 8 hook points above
+order: 10          # lower runs first within a hook; default 100
+mode: single       # "single" | "batch"; default "single"
+---
 ```
-
-**Phases:**
-
-| Phase | When | Default Agent |
-|-------|------|---------------|
-| `post-plan` | After plan creation, before user review | `devils-advocate` |
-| `post-implementation` | After all TDD workers complete, before commit | none (`standards-enforcer` available, off by default) |
 
 **Customizing the pipeline:**
 
-Add, remove, or reorder agents at any phase. For example, to add a custom `security-reviewer` to post-plan, enable the built-in `standards-enforcer` (off by default), and add a custom `doc-updater` to post-implementation:
+Enable, add, remove, or reorder agents by editing frontmatter — never a central file.
 
-```markdown
-# Pipeline
+- **Enable a built-in agent.** `standards-enforcer` ships with its enrollment commented out. Uncomment its `phase` (and optional `order` / `mode`) to turn it on:
 
-## post-plan
-- devils-advocate
-- security-reviewer
+  ```yaml
+  ---
+  name: standards-enforcer
+  description: "..."
+  model: opus
+  tools: Read, Edit, Glob, Grep
+  # To enable code-standards enforcement after implementation, uncomment:
+  phase: post-implementation
+  order: 50
+  mode: batch
+  ---
+  ```
 
-## post-implementation
-- standards-enforcer
-- doc-updater
-```
+- **Add a custom gate.** Drop an agent file into your project's `.claude/agents/` directory with a `phase`, and it is enrolled automatically:
 
-**Creating custom agents:**
+  ```markdown
+  ---
+  name: doc-updater
+  description: "Updates documentation when implementation changes."
+  model: sonnet
+  tools: Read, Edit, Glob, Grep
+  phase: post-implementation
+  order: 100
+  mode: single
+  ---
 
-Create a markdown file in your project's `.claude/agents/` directory:
+  You are a documentation updater. Your job is to...
+  {define the agent's behavior, process, and output format}
+  ```
 
-```
-.claude/agents/doc-updater.md
-```
+- **Disable an agent.** Remove (or comment out) its `phase` key — there is no condition to toggle.
 
-The agent file follows the standard Claude Code agent format with frontmatter:
+The agent's **filename** (without `.md`) should match its frontmatter `name`. Local agents in `.claude/agents/` override plugin agents with the same `name` (the local file wins entirely).
 
-```markdown
----
-name: doc-updater
-description: "Updates documentation when implementation changes."
-model: sonnet
-tools: Read, Edit, Glob, Grep
----
-
-You are a documentation updater. Your job is to...
-{define the agent's behavior, process, and output format}
-```
-
-The agent name in `pipeline.md` must match the agent's filename (without `.md`). Local agents in `.claude/agents/` override plugin agents with the same name.
+> **Upgrading from `pipeline.md`:** Earlier versions of HCF configured the pipeline in a central `.claude/pipeline.md` file. That file is **no longer read** — agent frontmatter is now the only source of pipeline configuration. If a leftover `.claude/pipeline.md` is present, HCF **blocks `plan-create` and `plan-orchestrate`** (you'll see a prompt on session start and when you try to plan) until you run **`/project-update`**, which migrates your configuration into agent frontmatter and removes the file. `/project-update` is never blocked, and the gate clears automatically once the file is gone.
 
 ### Dependency Graph
 
@@ -225,7 +244,6 @@ Each task follows strict Red → Green → Refactor:
 | `testing.md` | Test commands, coverage requirements |
 | `code-standards.md` | Linting, formatting rules |
 | `architecture.md` | Directory structure, patterns |
-| `pipeline.md` | Workflow agent configuration |
 
 #### Plans (`.claude/plans/{name}/`)
 
@@ -293,7 +311,7 @@ hcf/
 │   │   └── SKILL.md          # Interactive planning skill (auto-triggers)
 │   └── plan-orchestrate/
 │       └── SKILL.md          # Parallel TDD execution skill (auto-triggers)
-├── pipeline.md               # Default pipeline configuration
+├── HOOKS.md                  # Authoritative hook/frontmatter reference
 ├── CLAUDE.md                 # Portable CLAUDE.md template for projects
 └── README.md
 ```

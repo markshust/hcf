@@ -16,6 +16,27 @@ Transform feature requests into structured plans with task breakdowns, dependenc
 
 ## Execution Flow
 
+### Phase 0: Pre-plan hook
+
+Run this once, at the very start, before Phase 1 discovery.
+
+**Run the `pre-plan` hook.**
+
+Resolve and run agents enrolled at the `pre-plan` hook using the `HOOKS.md` Discovery Routine (glob local `.claude/agents/*.md`, glob the plugin `agents/` directory resolved **two levels up from this `SKILL.md`** per HOOKS.md, merge with local override, validate phases, filter to `pre-plan`, sort by `order` then `name`). This hook is **empty by default** — if no agent declares `phase: pre-plan`, take the empty-hook fast path: return immediately, print nothing, spawn nothing, and proceed to Phase 1.
+
+If the hook is non-empty, **print the resolved agent order** (name, order, mode) before spawning, then spawn each agent in order per its `mode`.
+
+**IMPORTANT — no plan name exists yet.** The `pre-plan` hook fires *before* Phase 1 discovery. The plan name and plan directory are not created until Phase 3, so there is **no plan name to pass**. Each `pre-plan` agent receives only:
+1. The raw feature request (the user's verbatim ask).
+2. The project's architecture context:
+
+```
+## Project Architecture
+{paste the COMPLETE content of <architecture> verbatim}
+```
+
+Do **not** attempt to pass a plan name or plan directory to a `pre-plan` agent — neither exists yet. The `pre-plan` hook is thin by design (policy gate / house-context injection).
+
 ### Phase 1: Discovery & Assumption Brainstorm
 
 Approach this phase like a solution architect meeting with a client to flush out scope and requirements. Your job is not to ask everything — it's to think hard about the shape of the solution before asking grounded questions. Find the integration points, then enumerate the design axes the user probably hasn't thought about.
@@ -222,40 +243,40 @@ Show the user a simple dependency tree:
      └─► 004 ────► 006
 ```
 
-### Phase 6: Run Post-Plan Pipeline
+### Phase 6: Run the `post-plan` Hook
 
-After validating dependencies, run all agents configured in the `post-plan` phase of `pipeline.md`.
+After validating dependencies, resolve and run the agents enrolled at the `post-plan` hook.
 
-**1. Read the pipeline configuration:**
+**1. Discover `post-plan` agents via frontmatter.**
 
-Parse the `## post-plan` section from the `<pipeline>` context included in CLAUDE.md. Each bullet point is an agent name to spawn.
+Resolve which agents run using the `HOOKS.md` Discovery Routine. Concretely: glob local `.claude/agents/*.md`, glob the plugin `agents/` directory (resolved **two levels up from this `SKILL.md`** per HOOKS.md), merge with local override, validate phases, filter to agents whose frontmatter `phase` equals `post-plan`, then sort by `order` ascending (missing `order` = `100`), tie-broken by case-insensitive `name`.
 
-**2. For each agent in the post-plan list**, spawn it sequentially:
+**2. Empty-hook fast path.**
 
-Use the Agent tool with `subagent_type="{agent-name}"` and pass the plan name and project context.
+If the filtered set is empty, this is an empty hook: **return immediately** — print nothing, spawn nothing, do no work — and proceed to Phase 7. (No agent declaring `phase: post-plan` is a valid, clean configuration.)
 
-**The subagent prompt must include:**
-1. The plan name (so it knows the directory path)
-2. The project's architecture context:
+**3. Print the resolved agent order.**
+
+If the hook is non-empty, **PRINT** the resolved, sorted list of `post-plan` agents (name, order, mode) before spawning anything, so the run is auditable.
+
+**4. Spawn each agent in the resolved order**, sequentially:
+
+Use the Agent tool with `subagent_type="{agent-name}"`. The subagent prompt **must** include:
+1. The plan name (so it knows the plan directory path).
+2. The project's architecture context, pasted verbatim — do **not** summarize:
 
 ```
 ## Project Architecture
 {paste the COMPLETE content of <architecture> verbatim}
 ```
 
-**3. After each subagent completes**, read any updated plan files to prepare the recap for the user.
+**5. After each subagent completes**, read any updated plan files to prepare the recap for the user.
 
-**Default pipeline** (ships with HCF):
-```
-## post-plan
-- devils-advocate
-```
-
-Users can add, remove, or reorder agents in their project's `.claude/pipeline.md`. For example, adding a `security-reviewer` agent after `devils-advocate`.
+Agents enroll in `post-plan` by declaring `phase: post-plan` in their own frontmatter (see `HOOKS.md`). There is no hardcoded default list here — for example, `devils-advocate` participates because it declares `phase: post-plan` in its frontmatter, not because plan-create names it. To add, remove, or reorder agents at this hook, edit their frontmatter `phase`/`order` (or override a plugin agent with a local `.claude/agents` file of the same `name`).
 
 ### Phase 7: Review with User
 
-Present the refined plan along with what the devil's advocate changed:
+Present the refined plan along with a summary of whatever `post-plan` agents actually ran in Phase 6.
 
 > Here's the plan I've created for **{feature name}**:
 >
@@ -267,12 +288,14 @@ Present the refined plan along with what the devil's advocate changed:
 > | 001 | {title} | none |
 > | 002 | {title} | 001 |
 > | ... | ... | ... |
+
+**If one or more `post-plan` agents ran**, include a review section that summarizes what *those specific agents* changed. Title it after the agents that ran (e.g. "Post-Plan Review by {agent names that ran}"), and attribute the changes to the agent that made them. Do **not** assume a single fixed reviewer or hardcode "devil's advocate" — render whatever the resolved Phase 6 hook produced:
+
+> **Post-Plan Review** ({names of agents that ran})
 >
-> **Post-Plan Review**
+> The plan was reviewed by the agents enrolled at the `post-plan` hook. Here's what each refined:
 >
-> The plan was automatically reviewed by the post-plan pipeline agents. Here's what was refined:
->
-> {summarize changes from each agent that ran, e.g.:}
+> {for each agent that ran, summarize its changes, e.g.:}
 > - Added missing dependency: task 005 now depends on 003 (shared interface needed)
 > - Split task 008 into 008 and 009 (too large for single TDD cycle)
 > - Added edge case requirements to task 004 (empty state handling)
@@ -281,7 +304,11 @@ Present the refined plan along with what the devil's advocate changed:
 > {if there are deferred items from any agent, list them:}
 > **Items for your consideration:**
 > - {Items the user may want to weigh in on}
->
+
+**If no `post-plan` agents ran** (the hook was empty), omit the "Post-Plan Review" section entirely — do not print an empty heading or any "reviewed by" line. Present the plan table and go straight to the approval prompt below.
+
+Then, in all cases, ask:
+
 > Does this breakdown look correct? Would you like to:
 > 1. Approve and proceed
 > 2. Add/remove tasks

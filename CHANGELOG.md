@@ -4,6 +4,27 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-06-26
+
+### Added
+- **8 lifecycle hook points** spanning the plan and implementation flow: `pre-plan` / `post-plan`, `pre-implementation` / `post-implementation`, `pre-batch` / `post-batch`, and `pre-commit` / `post-commit`. Agents enroll at a hook to run at that named moment.
+- **Agent-frontmatter pipeline fields** — agents declare their pipeline membership directly in YAML frontmatter: `phase` (the hook point to enroll at), `order` (run order within a hook; lower runs first, default `100`), and `mode` (`single` or `batch`, default `single`).
+- **`HOOKS.md`** — a new top-level reference doc that is the authoritative source for the hook system: the 8 hook points, the frontmatter schema, the agent discovery routine, and sort/tie-break rules.
+- **Migration hooks** (in `hooks/hooks.json`) — a `SessionStart` notice plus `PreToolUse` and `UserPromptExpansion` gates that detect a legacy `.claude/pipeline.md` and **block `plan-create`/`plan-orchestrate` until it is migrated** with `/project-update` (covering both Claude-invoked and directly-typed slash commands). `/project-update` itself is never blocked, so the fix is always available.
+- **`Feature Development` section in the generated `CLAUDE.md`** — `project-setup` now emits a project-agnostic section, placed as the **first section** (right after the title/description), that routes feature work through `hcf:plan-create` / `hcf:plan-orchestrate` and tells Claude never to use the built-in plan mode. Previously the generated `CLAUDE.md` had no such wiring, so the planning workflow relied entirely on the skill's auto-trigger and could be suppressed by other directives in `CLAUDE.md`; the prominent placement is deliberate so it overrides them.
+
+### Changed
+- The pipeline is now configured via **agent frontmatter** (`phase:`) instead of a central `pipeline.md`. Declaring a `phase` on any agent enrolls it; because the bundled `devils-advocate` declares a `phase`, frontmatter enrollment is always authoritative.
+- `plan-orchestrate` now reads each agent's `mode` field to decide how to spawn it (`single` vs `batch`) instead of inferring it from the agent body.
+- `project-setup` no longer creates `pipeline.md`.
+- `project-update` now **migrates** a legacy `pipeline.md` into agent frontmatter (and removes the file once migrated).
+- `project-update` now **adds a missing Feature Development section** to `CLAUDE.md` automatically (purely additive — it never touches an existing section). This carries the `plan-create` / `plan-orchestrate` wiring across an upgrade for projects set up before the section existed.
+- The **empty-hook fast path** now explicitly forbids *narrating* why a hook is empty, not just suppressing the resolved-order line. An empty hook is silent and internal — `plan-orchestrate` no longer "thinks out loud" about agent enrollment (e.g. "tdd-worker and standards-enforcer declare no phase → no-op") during a run. Documented in `HOOKS.md` and `plan-orchestrate`.
+- `project-setup` and `project-update` are now **command-only** (`disable-model-invocation: true`) — they cannot be invoked programmatically by another skill.
+
+### Removed
+- `pipeline.md` is **no longer read as configuration** — there is no runtime fallback. HCF enrolls agents exclusively via frontmatter. A leftover `.claude/pipeline.md` blocks the planning workflow until `/project-update` migrates it into agent frontmatter and removes the file.
+
 ## [1.1.1] — 2026-05-01
 
 ### Changed
@@ -41,7 +62,8 @@ Initial public release.
 - **GitHub issue linking** — `plan-create` captures issue references (`Closes #N`, `Relates to #N`) and `plan-orchestrate` includes them in PR bodies for auto-close on merge.
 - MIT license.
 
-[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v1.1.1...HEAD
+[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.0.0...HEAD
+[2.0.0]: https://github.com/markshust/hcf/compare/hcf--v1.1.1...hcf--v2.0.0
 [1.1.1]: https://github.com/markshust/hcf/compare/hcf--v1.1.0...hcf--v1.1.1
 [1.1.0]: https://github.com/markshust/hcf/compare/hcf--v1.0.0...hcf--v1.1.0
 [1.0.0]: https://github.com/markshust/hcf/releases/tag/hcf--v1.0.0

@@ -17,10 +17,10 @@ Create `CLAUDE.md` and all project configuration files in `.claude/` through an 
 First, check if configuration already exists:
 
 ```bash
-ls CLAUDE.md .claude/testing.md .claude/code-standards.md .claude/architecture.md .claude/pipeline.md 2>/dev/null
+ls CLAUDE.md .claude/testing.md .claude/code-standards.md .claude/architecture.md 2>/dev/null
 ```
 
-If CLAUDE.md and all 4 config files exist, inform the user:
+If CLAUDE.md and all 3 config files (`testing.md`, `code-standards.md`, `architecture.md`) exist, inform the user:
 > Project already configured. CLAUDE.md and config files exist in `.claude/`. To reconfigure, delete CLAUDE.md and `.claude/` then run `/project-setup` again.
 
 Otherwise, continue with setup.
@@ -264,26 +264,13 @@ Example:
 
 *Optional expansions: DI/IoC details, plugin/extension system, event system, routing, configuration, bootstrap process, error handling, versioning strategy.*
 
-**Create `.claude/pipeline.md`:**
+**Pipeline enrollment (nothing to scaffold):**
 
-Copy the default `pipeline.md` from the HCF plugin into the project's `.claude/` directory. This defines which agents run at each phase of the workflow.
-
-```markdown
-# Pipeline
-
-Configure which agents run at each phase of the development workflow. Each entry is an agent name resolved from the project's `.claude/agents/` directory (local override) or the plugin's `agents/` directory (default).
-
-## post-plan
-- devils-advocate
-
-## post-implementation
-<!-- - standards-enforcer -->
-```
+Pipeline agents enroll via their own frontmatter (`phase:`), so a fresh setup already has a working pipeline from the plugin's bundled agents — nothing to scaffold here. `devils-advocate` runs at `post-plan`; `standards-enforcer` ships dormant (uncomment its `phase` to enable). See `HOOKS.md`.
 
 Tell the user:
-> **Pipeline configured** with `devils-advocate` enabled in `post-plan`. The `post-implementation` phase has `standards-enforcer` available but commented out by default — uncomment in `.claude/pipeline.md` if you want code-standards enforcement to run on changed files before commit.
-> You can customize `.claude/pipeline.md` to add, remove, or reorder agents at each phase.
-> Custom agents go in `.claude/agents/` — see the HCF README for details.
+> **Pipeline ready.** `devils-advocate` is enrolled at the `post-plan` hook via its own agent frontmatter, so it runs automatically when you create a plan. `standards-enforcer` ships with HCF but is dormant — uncomment its `phase` key in the agent's frontmatter to enable code-standards enforcement on changed files.
+> To add your own gate, drop an agent file in `.claude/agents/` and give it a `phase` (one of the 8 hook points). A local agent with the same `name` overrides the plugin's. See `HOOKS.md` for the full hook list and frontmatter schema.
 
 **Create `CLAUDE.md` in project root:**
 
@@ -293,6 +280,14 @@ This file provides always-on context for every Claude session. Keep it concise (
 # {Project Name}
 
 {Brief 1-2 sentence description of the project.}
+
+## Feature Development
+
+For any feature or change beyond a simple fix, use the `hcf:plan-create` skill to trigger the autonomous development workflow. Never use Claude Code's built-in plan mode. After writing a plan, ask the user if they want to execute it, and provide the command to run it later with the `hcf:plan-orchestrate` skill.
+
+Use this workflow for: new features, multi-file changes, anything requiring multiple steps or tests.
+
+Skip for: quick bug fixes, single-line changes, questions, documentation. When skipped, still ensure appropriate tests exist for any added functionality.
 
 ## Tech Stack
 
@@ -371,14 +366,13 @@ After creating all files, output:
 ✓ Created .claude/testing.md
 ✓ Created .claude/code-standards.md
 ✓ Created .claude/architecture.md
-✓ Created .claude/pipeline.md
 {✓ Installed ralph-wiggum plugin (if installed)}
 
 Project configured for autonomous development!
 
 Next steps:
 1. Review CLAUDE.md and the generated files in .claude/
-2. Customize .claude/pipeline.md to add/remove workflow agents
+2. Customize the pipeline by enrolling agents via frontmatter — set a `phase` on an agent in .claude/agents/ to add a gate, or remove a `phase` to drop one (see HOOKS.md)
 3. Describe a feature to start planning: "Help me implement..."
 4. The plan-create skill will auto-trigger to help you plan
 ```

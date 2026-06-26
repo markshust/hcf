@@ -105,6 +105,19 @@ If plan status is `ready`, change to `in_progress`:
 - Edit `.claude/plans/{plan-name}/_plan.md`
 - Set `## Status` to `in_progress`
 
+### Step 2a: Pre-Implementation Hook
+
+Run the `pre-implementation` hook **once**, after the status is set to
+`in_progress` and **before** the first batch is spawned.
+
+Resolve and run enrolled agents via the **HOOKS.md discovery routine** (see
+[Hook Discovery](#hook-discovery) below) with `HOOK = pre-implementation`. Pass
+each agent the project context as described in
+[Spawning hook agents](#spawning-hook-agents).
+
+If the hook is **empty** (no enrolled agents), honor the **empty-hook fast
+no-op**: return immediately, log nothing, do no work, and proceed to Step 3.
+
 ### Step 3: Find Ready Tasks
 
 A task is **ready** when:
@@ -124,7 +137,7 @@ for each task in tasks:
 **All Complete:**
 ```
 if all(task.status == "completed" for task in tasks):
-    Run Step 4a: Post-Implementation Pipeline (quality gates before final completion)
+    Run Step 4a: End-of-Run Hooks (quality gates + commit sequence before final completion)
     STOP
 ```
 
@@ -138,37 +151,55 @@ if len(ready_tasks) == 0:
         STOP
 ```
 
-### Step 4a: Post-Implementation Pipeline
+## Hook Discovery
 
-When all tasks are complete, run the agents configured in the `post-implementation` phase of `pipeline.md`.
+All hooks in this skill (`pre-implementation`, `pre-batch`, `post-batch`,
+`post-implementation`, `pre-commit`, `post-commit`) resolve their enrolled
+agents through the **single, authoritative discovery routine defined in
+[HOOKS.md → Discovery Routine](../../HOOKS.md#discovery-routine)**. Follow that
+routine literally; do not duplicate or improvise it here. In summary, for a
+given `HOOK`:
 
-**1. Read the pipeline configuration:**
+- Glob `.claude/agents/*.md` (local) and the **plugin** `agents/*.md`, with
+  local files overriding plugin agents of the same `name`.
+- **Resolve the plugin `agents/` directory** exactly as HOOKS.md /
+  `project-update` does: it is **two levels up from this `SKILL.md`** (this file
+  lives at `skills/plan-orchestrate/SKILL.md`, so the plugin root is two levels
+  up and the agents directory is `{plugin-root}/agents/`). If it cannot be
+  resolved from the skill path, fall back to `.claude/agents` only.
+- Enrollment is **purely frontmatter-based**: every agent declares its `phase`
+  in frontmatter, so frontmatter is always authoritative. There is no other
+  source to consult or merge.
+- Validate phases, **filter to this `HOOK`**, and sort by `order` ascending then
+  `name` (case-insensitive) for ties.
+- **Empty-hook fast no-op:** if the filtered set is empty, **return
+  immediately** — no staging, no diffing, no spawns, and **no logging or
+  narration**. "No narration" is literal and is the rule most often broken: do
+  not name the hook, do not say it is empty/skipped, and do not explain *why*
+  it is empty (e.g. "tdd-worker and standards-enforcer declare no phase, so this
+  is a no-op"). An empty hook is **completely invisible** in the user-facing
+  output — resolve it silently and move on. See [HOOKS.md → Empty-hook fast
+  path](../../HOOKS.md#empty-hook-fast-path).
+- Otherwise, **PRINT the resolved order** (each agent's `name`, `order`, `mode`)
+  before spawning anything, then spawn each agent per its **`mode` field**
+  (`single` → one subagent for the whole plan; `batch` → split the relevant file
+  list into batches of ~10 and spawn parallel subagents, one Task call per
+  batch, all in a single message). The spawn mode comes from the agent's `mode`
+  frontmatter field — never from sniffing the agent body text.
 
-Parse the `## post-implementation` section from the `<pipeline>` context included in CLAUDE.md. Each bullet point is an agent name to run.
+### Spawning hook agents
 
-**2. Get the list of changed files:**
-```bash
-git add -A && git diff --name-only --cached && git reset HEAD
-```
-This temporarily stages everything to get the file list, then unstages. Nothing is committed yet.
+Hook agents are spawned with the Task tool using `subagent_type="{agent-name}"`.
+The orchestrator only has `<testing>` and `<code-standards>` in context (see
+[Project Configuration](#project-configuration)) — it does NOT have
+`<architecture>`. Pass each hook agent the project context it needs verbatim:
 
-**3. For each agent in the post-implementation list**, run it with the changed files:
+> **CRITICAL: Pass the COMPLETE, VERBATIM content of the `<code-standards>` and
+> `<testing>` tags above. Do NOT summarize, condense, or paraphrase. The full
+> documents contain nuanced rules that are lost when summarized. Copy-paste the
+> entire content between the tags.**
 
-For agents that operate on file batches (like `standards-enforcer`), split files into batches of ~10 and spawn parallel subagents. For agents that operate on the plan as a whole, spawn a single subagent.
-
-**How to determine the agent's mode:** Read the agent's `.md` file. If it references "batch" or "file list" in its prompt format, use batch mode. Otherwise, use single mode.
-
-**Batch mode** (e.g., standards-enforcer):
-```
-Use the Task tool with subagent_type="{agent-name}" for EACH batch.
-All Task tool calls MUST be made in a SINGLE message to enable parallel execution.
-```
-
-Worker Prompt (per batch):
-
-> **CRITICAL: Pass the COMPLETE, VERBATIM content of the `<code-standards>` and `<testing>` tags above.
-> Do NOT summarize, condense, or paraphrase. The full documents contain nuanced rules
-> that are lost when summarized. Copy-paste the entire content between the tags.**
+For a **`batch`** agent, send one prompt per batch:
 
 ```markdown
 ## Code Standards
@@ -181,14 +212,42 @@ Worker Prompt (per batch):
 {list of files in this batch, one per line}
 ```
 
-**Single mode** (e.g., doc-updater):
-```
-Use the Task tool with subagent_type="{agent-name}" once.
+For a **`single`** agent, send one prompt covering the whole plan, including the
+plan name, the changed-files list, and `<testing>` + `<code-standards>` verbatim.
+
+> If a hook agent needs project architecture, that is out of scope for this
+> orchestrator — it does not load `<architecture>`. Do NOT fabricate an
+> `## Project Architecture` paste here.
+
+### Step 4a: End-of-Run Hooks (Post-Implementation → Tests → Commit)
+
+When all tasks are complete, run the end-of-run hook sequence. The control flow
+is strictly:
+
+**post-implementation → run full test suite → pre-commit → commit → post-commit**
+
+> **CRITICAL INVARIANT: NOTHING is committed until AFTER the full test suite
+> passes.** This ensures no broken code is ever committed. The `pre-commit` hook
+> runs *after* tests pass and *before* the commit; `post-commit` runs *after*
+> the commit and *before* the push/PR prompt.
+
+**1. Run the `post-implementation` hook:**
+
+Resolve and run enrolled agents via the [Hook Discovery](#hook-discovery)
+routine with `HOOK = post-implementation`. To give batch agents a file list,
+first compute the changed files (this stages everything only to read the list,
+then unstages — nothing is committed):
+
+```bash
+git add -A && git diff --name-only --cached && git reset HEAD
 ```
 
-Pass the plan name, changed files list, and any relevant project context.
+Then spawn the resolved agents per their `mode` (see
+[Spawning hook agents](#spawning-hook-agents)). If the hook is **empty**, honor
+the **empty-hook fast no-op** (return immediately, no logging, no work) and
+proceed to step 2.
 
-**4. After ALL post-implementation agents complete, run validation:**
+**2. After ALL post-implementation agents complete, run validation:**
 ```bash
 # Run full test suite
 {parallel test command from testing.md}
@@ -196,36 +255,77 @@ Pass the plan name, changed files list, and any relevant project context.
 
 > **CRITICAL: Nothing is committed until AFTER the full test suite passes.** This ensures no broken code is ever committed.
 
-**5. On tests passing:**
+**3. On test failure** — isolate the cause (see
+[Test-failure isolation](#test-failure-isolation) below), then either commit the
+implementation only or output `TASKS_BLOCKED`.
+
+**4. On tests passing — run the `pre-commit` hook:**
+
+Resolve and run enrolled agents via [Hook Discovery](#hook-discovery) with
+`HOOK = pre-commit`. These run *after* the suite passes and *before* the commit.
+Honor the **empty-hook fast no-op**.
+
+> If a `pre-commit` agent modifies files, those edits are part of this commit. A
+> pre-commit agent that changes files could break tests; that risk is covered by
+> the [Test-failure isolation](#test-failure-isolation) stash, which now spans
+> both post-implementation and pre-commit hook output.
+
+**5. Commit:**
 First, update `_plan.md` status to `completed`. Then stage and commit everything together in a **single commit**:
 ```bash
 # 1. Update plan status BEFORE committing
 # (edit .claude/plans/{plan-name}/_plan.md — set Status to "completed")
 
-# 2. Stage everything: implementation + pipeline agent fixes + plan files (including updated status)
+# 2. Stage everything: implementation + hook agent fixes + plan files (including updated status)
 git add -A .claude/plans/{plan-name}/
 git add -A
 git commit -m "feat({plan-name}): {plan title summary}"
 ```
 > **IMPORTANT:** There must be exactly ONE commit here — do NOT make a separate commit for the plan status update. Update the status first, then stage and commit all changes together.
 
+**6. After the commit succeeds — run the `post-commit` hook:**
+
+Resolve and run enrolled agents via [Hook Discovery](#hook-discovery) with
+`HOOK = post-commit`. These run *after* the commit and *before* the push/PR
+prompt (the [Output Summary](#output-summary) at the end of this skill). Honor
+the **empty-hook fast no-op**.
+
+> **`post-commit` agents that produce uncommitted changes are REPORTED, not
+> silently committed.** The commit above already happened; do not amend or
+> create a second commit. Surface any working-tree changes a post-commit agent
+> left behind so the user can decide what to do.
+
 Output: `ALL_TASKS_COMPLETE`
 
-**6. On test failure:**
-- Revert only the post-implementation agent changes to isolate whether they broke things:
-   ```bash
-   git stash
-   ```
-   Re-run the test suite on just the implementation.
-- If implementation tests pass: a post-implementation agent broke something. Drop the stash, commit implementation only, and output:
+#### Test-failure isolation
+
+If the full test suite fails at step 3 (or after pre-commit edits), isolate
+whether the **hook agents** (any `post-implementation` or `pre-commit` agent
+that edited files) broke things versus the implementation itself. The git stash
+isolation spans **both** the post-implementation and pre-commit hook output:
+
+```bash
+git stash
+```
+Re-run the test suite on just the implementation.
+
+- If implementation tests pass: a hook agent (post-implementation or pre-commit)
+  broke something. Drop the stash, commit implementation only, and output:
    ```
    ALL_TASKS_COMPLETE
 
-   WARNING: Post-implementation pipeline broke tests. Implementation committed without pipeline fixes. Review and run manually.
+   WARNING: A post-implementation or pre-commit hook agent broke tests. Implementation committed without hook fixes. Review and run manually.
    ```
-- If implementation tests also fail: a TDD worker produced broken code. Restore the stash (`git stash pop`) and output `TASKS_BLOCKED` with details.
+- If implementation tests also fail: a TDD worker produced broken code. Restore
+  the stash (`git stash pop`) and output `TASKS_BLOCKED` with details.
 
 ### Step 5: Spawn Parallel Workers
+
+**Pre-batch hook (this loop iteration).** Before spawning workers, run the
+`pre-batch` hook via the [Hook Discovery](#hook-discovery) routine with
+`HOOK = pre-batch`. Because this runs on **every** loop iteration, honoring the
+**empty-hook fast no-op** is important: if no agents are enrolled, return
+immediately — log nothing, do no work — so unconfigured loops add zero overhead.
 
 For EACH ready task, spawn a Task tool subagent **in parallel** (single message with multiple Task tool calls):
 
@@ -272,6 +372,13 @@ Wait for ALL parallel Task tool calls to complete. For each result:
 3. If retry count < 3:
    - Keep status as `pending` (will retry in next batch)
    - Log the failure for visibility
+
+**Post-batch hook (this loop iteration).** After all results for this batch are
+collected and statuses are updated, run the `post-batch` hook via the
+[Hook Discovery](#hook-discovery) routine with `HOOK = post-batch`. Because this
+runs on **every** loop iteration, honoring the **empty-hook fast no-op** is
+important: if no agents are enrolled, return immediately — log nothing, do no
+work — so unconfigured loops add zero overhead.
 
 ### Step 7: Report Progress
 
@@ -339,7 +446,7 @@ ALL_TASKS_COMPLETE
 Plan: {plan-name}
 Total tasks: {N}
 All tests passing.
-Post-implementation pipeline complete.
+Post-implementation hooks complete.
 Commits created: {N}
 
 ## What Changed

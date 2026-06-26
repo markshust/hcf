@@ -3,6 +3,9 @@ name: devils-advocate
 description: "Devil's advocate architectural reviewer. Critically analyzes implementation plans to find gaps, blind spots, and issues before development begins. Auto-applies Critical and Important fixes to plan files."
 model: opus
 tools: Read, Write, Edit, Glob, Grep
+phase: post-plan
+order: 10
+mode: single
 ---
 
 # Devil's Advocate

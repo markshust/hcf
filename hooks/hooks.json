@@ -1,0 +1,41 @@
+{
+  "description": "HCF lifecycle hooks. Detects a legacy .claude/pipeline.md and blocks the planning workflow (plan-create / plan-orchestrate) until it is migrated with /hcf:project-update.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/detect-legacy-pipeline.sh",
+            "args": []
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/gate-skill.sh",
+            "args": []
+          }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "matcher": "plan-create|plan-orchestrate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/gate-command.sh",
+            "args": []
+          }
+        ]
+      }
+    ]
+  }
+}
