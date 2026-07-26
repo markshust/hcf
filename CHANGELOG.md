@@ -4,6 +4,8 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-07-26
+
 ### Added
 - **`hooks/discover-hooks.sh`** — hook discovery is now a shipped script instead of prose instructions the model executed by improvising a bash glob loop. `plan-create` and `plan-orchestrate` run it at all 8 hook call sites and read its output. Closes [#4](https://github.com/markshust/hcf/issues/4), where an improvised enumeration hit a bash syntax error partway through, its partial output was consumed as complete, and **every hook silently resolved empty** — with no error, because the empty-hook silence rule made the failure invisible.
 - **Run it by hand to debug enrollment.** `$(claude plugin path hcf)/hooks/discover-hooks.sh` prints what is enrolled at every hook; add `--hook=<name>` for one, or `--json` for tooling. This is the fastest answer to "why didn't my agent fire?", which previously had no answer at all — the improvised script no longer existed by the time you asked.
@@ -76,7 +78,8 @@ Initial public release.
 - **GitHub issue linking** — `plan-create` captures issue references (`Closes #N`, `Relates to #N`) and `plan-orchestrate` includes them in PR bodies for auto-close on merge.
 - MIT license.
 
-[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.0.0...HEAD
+[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.1.0...HEAD
+[2.1.0]: https://github.com/markshust/hcf/compare/hcf--v2.0.0...hcf--v2.1.0
 [2.0.0]: https://github.com/markshust/hcf/compare/hcf--v1.1.1...hcf--v2.0.0
 [1.1.1]: https://github.com/markshust/hcf/compare/hcf--v1.1.0...hcf--v1.1.1
 [1.1.0]: https://github.com/markshust/hcf/compare/hcf--v1.0.0...hcf--v1.1.0
