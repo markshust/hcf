@@ -342,16 +342,21 @@ hcf/
 │   ├── lib.sh                # Assertions and fixture helpers
 │   ├── test-*.sh             # Suites, auto-discovered by run-tests.sh
 │   └── fixtures/             # Agent files exercising parser edge cases
+├── .claude/
+│   └── CLAUDE.md             # HCF's own project config (not shipped to users)
 ├── HOOKS.md                  # Authoritative hook/frontmatter reference
-├── CLAUDE.md                 # Portable CLAUDE.md template for projects
 └── README.md
 ```
+
+The `CLAUDE.md` template that `/project-setup` generates for **your** project
+lives inline in `skills/project-setup/SKILL.md` — `.claude/CLAUDE.md` above is
+this repo's own config and has no effect on what users get.
 
 ## Design Principles
 
 1. **Pure TDD** - No Gherkin/BDD, requirements map directly to test names
 2. **Parallel by default** - Auto-detect independent tasks, maximize concurrency
-3. **100% portable** - CLAUDE.md identical across all projects
+3. **100% portable** - the generated CLAUDE.md is identical across all projects
 4. **Explicit dependencies** - Tasks declare what they depend on
 5. **Fail gracefully** - Retry 3x, then block and continue with other tasks
 
