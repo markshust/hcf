@@ -190,7 +190,26 @@ Enable, add, remove, or reorder agents by editing frontmatter — never a centra
 
 - **Disable an agent.** Remove (or comment out) its `phase` key — there is no condition to toggle.
 
-The agent's **filename** (without `.md`) should match its frontmatter `name`. Local agents in `.claude/agents/` override plugin agents with the same `name` (the local file wins entirely).
+The agent's **filename** (without `.md`) should match its frontmatter `name`. Local agents in `.claude/agents/` override plugin agents with the same `name` (the local file wins entirely) — the override is keyed on the frontmatter `name`, not the filename.
+
+**Check what's actually enrolled.** After editing frontmatter, run the discovery script to confirm it took effect. This is the first thing to try when an agent doesn't fire:
+
+```bash
+$(claude plugin path hcf)/hooks/discover-hooks.sh
+```
+
+```
+# hook: pre-plan
+  (empty — no agents enrolled at this hook)
+
+# hook: post-plan
+  order=10    name=devils-advocate                          mode=single
+...
+```
+
+Add `--hook=post-plan` for one hook, or `--json` for machine-readable output. HCF's planning skills run this exact script rather than enumerating agent files themselves, so what it prints is what will run.
+
+A **non-zero exit means discovery genuinely failed** — it is not the same as a hook being empty. Exit `3` means an agent file declares an invalid `phase` or `mode` (the message names the file and the fix); exit `4` means enrollment changed partway through a run. Both halt HCF deliberately, rather than quietly running a different pipeline than you configured.
 
 > **Upgrading from `pipeline.md`:** Earlier versions of HCF configured the pipeline in a central `.claude/pipeline.md` file. That file is **no longer read** — agent frontmatter is now the only source of pipeline configuration. If a leftover `.claude/pipeline.md` is present, HCF **blocks `plan-create` and `plan-orchestrate`** (you'll see a prompt on session start and when you try to plan) until you run **`/project-update`**, which migrates your configuration into agent frontmatter and removes the file. `/project-update` is never blocked, and the gate clears automatically once the file is gone.
 
@@ -302,6 +321,13 @@ hcf/
 │   ├── devils-advocate.md    # Plan reviewer - finds gaps before execution (opus)
 │   ├── tdd-worker.md         # TDD implementation worker (sonnet)
 │   └── standards-enforcer.md # Code standards enforcement (sonnet)
+├── hooks/
+│   ├── discover-hooks.sh     # Deterministic hook-agent discovery (see HOOKS.md)
+│   ├── detect-legacy-pipeline.sh # SessionStart warning for a legacy pipeline.md
+│   ├── gate-skill.sh         # PreToolUse gate on the planning skills
+│   ├── gate-command.sh       # UserPromptExpansion gate on the planning skills
+│   ├── pipeline-status.sh    # Shared helper sourced by the gates
+│   └── hooks.json            # Lifecycle hook registrations
 ├── skills/
 │   ├── project-setup/
 │   │   └── SKILL.md          # One-time setup skill (manual invocation only)
@@ -311,6 +337,11 @@ hcf/
 │   │   └── SKILL.md          # Interactive planning skill (auto-triggers)
 │   └── plan-orchestrate/
 │       └── SKILL.md          # Parallel TDD execution skill (auto-triggers)
+├── tests/
+│   ├── run-tests.sh          # Test suite entry point (no dependencies)
+│   ├── lib.sh                # Assertions and fixture helpers
+│   ├── test-*.sh             # Suites, auto-discovered by run-tests.sh
+│   └── fixtures/             # Agent files exercising parser edge cases
 ├── HOOKS.md                  # Authoritative hook/frontmatter reference
 ├── CLAUDE.md                 # Portable CLAUDE.md template for projects
 └── README.md
