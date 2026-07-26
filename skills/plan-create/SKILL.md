@@ -22,9 +22,25 @@ Run this once, at the very start, before Phase 1 discovery.
 
 **Run the `pre-plan` hook.**
 
-Resolve and run agents enrolled at the `pre-plan` hook using the `HOOKS.md` Discovery Routine (glob local `.claude/agents/*.md`, glob the plugin `agents/` directory resolved **two levels up from this `SKILL.md`** per HOOKS.md, merge with local override, validate phases, filter to `pre-plan`, sort by `order` then `name`). This hook is **empty by default** — if no agent declares `phase: pre-plan`, take the empty-hook fast path: return immediately, print nothing, spawn nothing, and proceed to Phase 1.
+Run the discovery script — never enumerate agent files by hand:
 
-If the hook is non-empty, **print the resolved agent order** (name, order, mode) before spawning, then spawn each agent in order per its `mode`.
+```bash
+"{skill-base-dir}/../../hooks/discover-hooks.sh" --hook=pre-plan
+```
+
+`{skill-base-dir}` is the **`Base directory for this skill`** value stated when this skill loaded. `${CLAUDE_PLUGIN_ROOT}` is not available in a skill's Bash calls.
+
+- **Exit 0, empty stdout** → empty hook. This is the default. Return immediately: print nothing, spawn nothing, say nothing about the hook at all, and proceed to Phase 1. Do **not** narrate that the script returned no agents — that is the narration `HOOKS.md` forbids.
+- **Exit 0, output** → **print the output verbatim** as the resolved agent order, then spawn each listed agent in order per its `mode`.
+- **Any non-zero exit** → **stop**. Surface the script's stderr verbatim and do not continue planning. Exit 3 means an agent file declares an invalid `phase` or `mode`; exit 4 means enrollment drifted. Neither is an empty hook. If the script is missing or not executable, that is also a hard stop — there is no fallback, and you must not reconstruct the routine by hand.
+
+**Capture the enrollment fingerprint** now, for Phase 6's drift check:
+
+```bash
+"{skill-base-dir}/../../hooks/discover-hooks.sh" --fingerprint
+```
+
+Hold that value. **A fingerprint is only ever produced by running the script** — never reconstruct, abbreviate, or recall one from memory. If it is not to hand at Phase 6, re-run the command and say so. A hallucinated digest makes every later check fail with bogus drift and bricks the plan.
 
 **IMPORTANT — no plan name exists yet.** The `pre-plan` hook fires *before* Phase 1 discovery. The plan name and plan directory are not created until Phase 3, so there is **no plan name to pass**. Each `pre-plan` agent receives only:
 1. The raw feature request (the user's verbatim ask).
@@ -123,6 +139,14 @@ mkdir -p .claude/plans/{plan-name}
 ```
 
 Use a kebab-case name derived from the feature (e.g., `user-authentication`, `payment-processing`).
+
+**Record the enrollment fingerprint** so `plan-orchestrate` can detect that hook enrollment changed between planning and execution. Write it by **redirecting a fresh invocation** — do not re-type the value captured at Phase 0:
+
+```bash
+"{skill-base-dir}/../../hooks/discover-hooks.sh" --fingerprint > .claude/plans/{plan-name}/.hook-fingerprint
+```
+
+The file holds exactly that one line and nothing else — no heading, no comment, no explanation. Writing it as a redirect rather than transcribing a remembered value is deliberate: Phases 1–2 are a long interactive stretch, and a value carried across them is exactly what gets lost and then invented.
 
 **Create `_plan.md`:**
 ```markdown
@@ -247,17 +271,25 @@ Show the user a simple dependency tree:
 
 After validating dependencies, resolve and run the agents enrolled at the `post-plan` hook.
 
-**1. Discover `post-plan` agents via frontmatter.**
+**1. Resolve `post-plan` agents.**
 
-Resolve which agents run using the `HOOKS.md` Discovery Routine. Concretely: glob local `.claude/agents/*.md`, glob the plugin `agents/` directory (resolved **two levels up from this `SKILL.md`** per HOOKS.md), merge with local override, validate phases, filter to agents whose frontmatter `phase` equals `post-plan`, then sort by `order` ascending (missing `order` = `100`), tie-broken by case-insensitive `name`.
+Run the discovery script, passing the fingerprint captured at Phase 0 so a mid-planning change to agent files is caught:
+
+```bash
+"{skill-base-dir}/../../hooks/discover-hooks.sh" --hook=post-plan --expect="<phase-0 fingerprint>"
+```
+
+Never enumerate agent files by hand. If the Phase 0 value is not to hand, re-run `--fingerprint` to get a current one rather than inventing a digest.
 
 **2. Empty-hook fast path.**
 
-If the filtered set is empty, this is an empty hook: **return immediately** — print nothing, spawn nothing, do no work — and proceed to Phase 7. (No agent declaring `phase: post-plan` is a valid, clean configuration.)
+**Exit 0 with empty stdout** is an empty hook: **return immediately** — print nothing, spawn nothing, do no work, say nothing about the hook — and proceed to Phase 7. (No agent declaring `phase: post-plan` is a valid, clean configuration.) Do not narrate that the script returned no agents.
 
 **3. Print the resolved agent order.**
 
-If the hook is non-empty, **PRINT** the resolved, sorted list of `post-plan` agents (name, order, mode) before spawning anything, so the run is auditable.
+On **exit 0 with output**, **PRINT that output verbatim** before spawning anything, so the run is auditable.
+
+**On any non-zero exit, stop.** Surface the script's stderr verbatim and do not proceed to Phase 7. Exit 3 means an agent file declares an invalid `phase` or `mode`; exit 4 means enrollment changed since Phase 0 — the plan directory already holds a current fingerprint, so re-running `plan-create` proceeds cleanly. A missing or non-executable script is a hard stop with no fallback.
 
 **4. Spawn each agent in the resolved order**, sequentially:
 

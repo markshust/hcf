@@ -1,0 +1,28 @@
+# Local Claude Code state: plan scaffolding (.claude/plans/), machine-specific
+# settings, and any fingerprint files HCF writes alongside a plan. Plans are
+# working scaffolding, not deliverables — this repo is the plugin itself and
+# does not run HCF on itself. Use `git add -f` if you ever genuinely want to
+# track something under here.
+.claude/
+
+# Test harness scratch space. run-tests.sh clears this on entry and exit, but a
+# suite that dies mid-run leaves it behind.
+tests/.tmp/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Conflict and in-place-edit leftovers (git merge, `sed -i.bak`)
+*.orig
+*.rej
+*.bak

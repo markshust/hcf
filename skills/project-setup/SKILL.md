@@ -266,11 +266,12 @@ Example:
 
 **Pipeline enrollment (nothing to scaffold):**
 
-Pipeline agents enroll via their own frontmatter (`phase:`), so a fresh setup already has a working pipeline from the plugin's bundled agents — nothing to scaffold here. `devils-advocate` runs at `post-plan`; `standards-enforcer` ships dormant (uncomment its `phase` to enable). See `HOOKS.md`.
+Pipeline agents enroll via their own frontmatter (`phase:`), so a fresh setup already has a working pipeline from the plugin's bundled agents — nothing to scaffold here. `devils-advocate` runs at `post-plan`; `standards-enforcer` ships dormant (uncomment its `phase` to enable). See `HOOKS.md`. Running `hooks/discover-hooks.sh` prints exactly what is enrolled at each hook.
 
 Tell the user:
 > **Pipeline ready.** `devils-advocate` is enrolled at the `post-plan` hook via its own agent frontmatter, so it runs automatically when you create a plan. `standards-enforcer` ships with HCF but is dormant — uncomment its `phase` key in the agent's frontmatter to enable code-standards enforcement on changed files.
 > To add your own gate, drop an agent file in `.claude/agents/` and give it a `phase` (one of the 8 hook points). A local agent with the same `name` overrides the plugin's. See `HOOKS.md` for the full hook list and frontmatter schema.
+> To see what is currently enrolled at each hook, run `$(claude plugin path hcf)/hooks/discover-hooks.sh` — that is the fastest answer whenever an agent doesn't fire.
 
 **Create `CLAUDE.md` in project root:**
 

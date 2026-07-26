@@ -105,6 +105,22 @@ If plan status is `ready`, change to `in_progress`:
 - Edit `.claude/plans/{plan-name}/_plan.md`
 - Set `## Status` to `in_progress`
 
+**Establish the run fingerprint.** Every hook call below passes this back via
+`--expect=`, so that agent files changing mid-run halt the orchestration rather
+than silently swapping the pipeline. Read
+`.claude/plans/{plan-name}/.hook-fingerprint` and handle three distinct states —
+conflating them is the mistake to avoid:
+
+| State | Action |
+|-------|--------|
+| **Present and parseable** (one line: `discover-hooks-fingerprint-v1 <64-hex>`) | Use it as `$RUN_FINGERPRINT`. Pass the file's contents **verbatim** — do not trim, reformat, or re-derive them. |
+| **Missing** | Not an error. Plans created before this feature have none. Capture one and write it to the plan directory so a resumed run is covered too, then continue: `"{skill-base-dir}/../../hooks/discover-hooks.sh" --fingerprint > .claude/plans/{plan-name}/.hook-fingerprint` |
+| **Present but unparseable** (empty, truncated, prose, wrong length) | **Halt.** Do not silently recapture — that would mask a botched write. Tell the user to delete the file to re-baseline. |
+
+**Never reconstruct, abbreviate, or recall a fingerprint from memory.** It is
+only ever produced by running the script. A hallucinated digest fails every
+subsequent hook with bogus drift and bricks the run.
+
 ### Step 2a: Pre-Implementation Hook
 
 Run the `pre-implementation` hook **once**, after the status is set to
@@ -115,8 +131,9 @@ Resolve and run enrolled agents via the **HOOKS.md discovery routine** (see
 each agent the project context as described in
 [Spawning hook agents](#spawning-hook-agents).
 
-If the hook is **empty** (no enrolled agents), honor the **empty-hook fast
-no-op**: return immediately, log nothing, do no work, and proceed to Step 3.
+**Exit 0 with empty stdout** is an empty hook: return immediately, log nothing,
+do no work, and proceed to Step 3. **Any non-zero exit stops the run** — see
+[Hook Discovery](#hook-discovery) for the full result table.
 
 ### Step 3: Find Ready Tasks
 
@@ -155,34 +172,47 @@ if len(ready_tasks) == 0:
 
 All hooks in this skill (`pre-implementation`, `pre-batch`, `post-batch`,
 `post-implementation`, `pre-commit`, `post-commit`) resolve their enrolled
-agents through the **single, authoritative discovery routine defined in
-[HOOKS.md → Discovery Routine](../../HOOKS.md#discovery-routine)**. Follow that
-routine literally; do not duplicate or improvise it here. In summary, for a
+agents by running **`hooks/discover-hooks.sh`**, the single implementation of
+[HOOKS.md → Discovery Routine](../../HOOKS.md#discovery-routine). **Never
+enumerate agent files by hand and never write a glob loop to do it.** For a
 given `HOOK`:
 
-- Glob `.claude/agents/*.md` (local) and the **plugin** `agents/*.md`, with
-  local files overriding plugin agents of the same `name`.
-- **Resolve the plugin `agents/` directory** exactly as HOOKS.md /
-  `project-update` does: it is **two levels up from this `SKILL.md`** (this file
-  lives at `skills/plan-orchestrate/SKILL.md`, so the plugin root is two levels
-  up and the agents directory is `{plugin-root}/agents/`). If it cannot be
-  resolved from the skill path, fall back to `.claude/agents` only.
-- Enrollment is **purely frontmatter-based**: every agent declares its `phase`
-  in frontmatter, so frontmatter is always authoritative. There is no other
-  source to consult or merge.
-- Validate phases, **filter to this `HOOK`**, and sort by `order` ascending then
-  `name` (case-insensitive) for ties.
-- **Empty-hook fast no-op:** if the filtered set is empty, **return
-  immediately** — no staging, no diffing, no spawns, and **no logging or
-  narration**. "No narration" is literal and is the rule most often broken: do
-  not name the hook, do not say it is empty/skipped, and do not explain *why*
-  it is empty (e.g. "tdd-worker and standards-enforcer declare no phase, so this
-  is a no-op"). An empty hook is **completely invisible** in the user-facing
-  output — resolve it silently and move on. See [HOOKS.md → Empty-hook fast
+```bash
+"{skill-base-dir}/../../hooks/discover-hooks.sh" --hook=<HOOK> --expect="$RUN_FINGERPRINT"
+```
+
+`{skill-base-dir}` is the **`Base directory for this skill`** value stated when
+this skill loaded — it is given verbatim, so no path inference is needed.
+`${CLAUDE_PLUGIN_ROOT}` is **not** available in a skill's Bash calls.
+`$RUN_FINGERPRINT` is the value established at [Step 2](#step-2-update-plan-status).
+
+Then, by result:
+
+- **Exit 0, empty stdout → empty hook.** Return immediately — no staging, no
+  diffing, no spawns, and **no logging or narration**. "No narration" is literal
+  and is the rule most often broken: do not name the hook, do not say it is
+  empty/skipped, do not explain *why* it is empty, and **do not say the
+  discovery script returned no agents**. A filtered query prints zero bytes
+  precisely so there is nothing to echo. An empty hook is **completely
+  invisible** in the user-facing output. See [HOOKS.md → Empty-hook fast
   path](../../HOOKS.md#empty-hook-fast-path).
-- Otherwise, **PRINT the resolved order** (each agent's `name`, `order`, `mode`)
-  before spawning anything, then spawn each agent per its **`mode` field**
-  (`single` → one subagent for the whole plan; `batch` → split the relevant file
+- **Exit 0, output → PRINT it verbatim** as the resolved order, then spawn.
+- **Exit 1 or 2 → stop the run.** Surface stderr verbatim.
+- **Exit 3 → stop the run.** An agent file declares an invalid `phase` or
+  `mode`. Surface stderr verbatim; it names the file and the fix.
+- **Exit 4 → halt HCF.** Hook enrollment changed since this run started, so the
+  remaining hooks would execute a different pipeline than the plan was reviewed
+  against. Surface stderr verbatim. Do **not** continue the batch loop and do
+  **not** commit.
+- **Script missing or not executable → hard failure.** Say so and stop. There is
+  no prose fallback; reconstructing the routine by hand is the failure this
+  design exists to end.
+
+**Only exit 0 with empty stdout is an empty hook.** Every other non-zero exit is
+an error to report loudly.
+
+On a normal (exit 0, non-empty) result, spawn each agent per its **`mode` field**
+(`single` → one subagent for the whole plan; `batch` → split the relevant file
   list into batches of ~10 and spawn parallel subagents, one Task call per
   batch, all in a single message). The spawn mode comes from the agent's `mode`
   frontmatter field — never from sniffing the agent body text.
@@ -243,9 +273,9 @@ git add -A && git diff --name-only --cached && git reset HEAD
 ```
 
 Then spawn the resolved agents per their `mode` (see
-[Spawning hook agents](#spawning-hook-agents)). If the hook is **empty**, honor
-the **empty-hook fast no-op** (return immediately, no logging, no work) and
-proceed to step 2.
+[Spawning hook agents](#spawning-hook-agents)). **Exit 0 with empty stdout** is
+an empty hook: return immediately, no logging, no work, and proceed to step 2.
+**Any non-zero exit stops the run** — see [Hook Discovery](#hook-discovery).
 
 **2. After ALL post-implementation agents complete, run validation:**
 ```bash
@@ -263,7 +293,8 @@ implementation only or output `TASKS_BLOCKED`.
 
 Resolve and run enrolled agents via [Hook Discovery](#hook-discovery) with
 `HOOK = pre-commit`. These run *after* the suite passes and *before* the commit.
-Honor the **empty-hook fast no-op**.
+**Exit 0 with empty stdout** is an empty hook (silent no-op); **any non-zero
+exit stops the run before the commit** — see [Hook Discovery](#hook-discovery).
 
 > If a `pre-commit` agent modifies files, those edits are part of this commit. A
 > pre-commit agent that changes files could break tests; that risk is covered by
@@ -287,8 +318,10 @@ git commit -m "feat({plan-name}): {plan title summary}"
 
 Resolve and run enrolled agents via [Hook Discovery](#hook-discovery) with
 `HOOK = post-commit`. These run *after* the commit and *before* the push/PR
-prompt (the [Output Summary](#output-summary) at the end of this skill). Honor
-the **empty-hook fast no-op**.
+prompt (the [Output Summary](#output-summary) at the end of this skill).
+**Exit 0 with empty stdout** is an empty hook (silent no-op); **any non-zero
+exit is reported loudly** — see [Hook Discovery](#hook-discovery). The commit
+has already happened, so report the failure rather than trying to undo it.
 
 > **`post-commit` agents that produce uncommitted changes are REPORTED, not
 > silently committed.** The commit above already happened; do not amend or
@@ -324,8 +357,11 @@ Re-run the test suite on just the implementation.
 **Pre-batch hook (this loop iteration).** Before spawning workers, run the
 `pre-batch` hook via the [Hook Discovery](#hook-discovery) routine with
 `HOOK = pre-batch`. Because this runs on **every** loop iteration, honoring the
-**empty-hook fast no-op** is important: if no agents are enrolled, return
+**empty-hook fast no-op** is important: on **exit 0 with empty stdout**, return
 immediately — log nothing, do no work — so unconfigured loops add zero overhead.
+**Any non-zero exit stops the run**; per-iteration checking is also what makes
+drift (exit 4) surface promptly rather than at the end. See
+[Hook Discovery](#hook-discovery).
 
 For EACH ready task, spawn a Task tool subagent **in parallel** (single message with multiple Task tool calls):
 
@@ -375,7 +411,8 @@ Wait for ALL parallel Task tool calls to complete. For each result:
 
 **Post-batch hook (this loop iteration).** After all results for this batch are
 collected and statuses are updated, run the `post-batch` hook via the
-[Hook Discovery](#hook-discovery) routine with `HOOK = post-batch`. Because this
+[Hook Discovery](#hook-discovery) routine with `HOOK = post-batch`. **Any
+non-zero exit stops the run.** Because this
 runs on **every** loop iteration, honoring the **empty-hook fast no-op** is
 important: if no agents are enrolled, return immediately — log nothing, do no
 work — so unconfigured loops add zero overhead.

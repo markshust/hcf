@@ -4,6 +4,20 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+### Added
+- **`hooks/discover-hooks.sh`** — hook discovery is now a shipped script instead of prose instructions the model executed by improvising a bash glob loop. `plan-create` and `plan-orchestrate` run it at all 8 hook call sites and read its output. Closes [#4](https://github.com/markshust/hcf/issues/4), where an improvised enumeration hit a bash syntax error partway through, its partial output was consumed as complete, and **every hook silently resolved empty** — with no error, because the empty-hook silence rule made the failure invisible.
+- **Run it by hand to debug enrollment.** `$(claude plugin path hcf)/hooks/discover-hooks.sh` prints what is enrolled at every hook; add `--hook=<name>` for one, or `--json` for tooling. This is the fastest answer to "why didn't my agent fire?", which previously had no answer at all — the improvised script no longer existed by the time you asked.
+- **Drift detection.** `--fingerprint` captures the resolved enrollment across all 8 hooks; `plan-create` stores it in the plan directory and `plan-orchestrate` re-checks it via `--expect=` on every hook call. If agent files change midway through a run, HCF halts and names what changed rather than silently executing a different pipeline than the plan was reviewed against. Agent *body* content is deliberately not covered — editing an agent's prose is not drift.
+- **Test suite** (`./tests/run-tests.sh`) — 97 tests, no dependencies beyond bash/awk/sed/sort/grep, runnable on bash 3.2 (stock macOS).
+
+### Changed
+- **An invalid `phase` or `mode` in an agent file now aborts (exit 3) instead of being warned past.** Previously an unknown `phase` was ignored with a warning, which meant the agent ran *nowhere* — silent non-execution, the same class of failure as the bug above. Validation is global, so the error surfaces at the first hook of a run rather than hours later. **This can affect existing projects:** if an agent file has a typo'd `phase`, planning now halts until it is fixed. The error names the file, the bad value, and the two remedies — correct the value, or remove the `phase` key entirely to unenroll the agent. Only `plan-create` and `plan-orchestrate` are affected; `/project-update` and every other skill stay runnable.
+- **A frontmatter value carrying a trailing `# …` comment now parses correctly.** The enrollment example documented in `HOOKS.md` and `README.md` uses exactly that form (`phase: post-plan   # enrolls this agent…`), so copy-pasting the documented example previously produced an agent that never ran.
+- Agent files written with **CRLF line endings** are now parsed rather than silently skipped.
+- The local-overrides-plugin merge is keyed on the frontmatter `name`, not the filename.
+- The empty-hook fast path is now defined as **exit 0 with empty stdout**. Any non-zero exit is an error to report loudly — it is no longer possible for a discovery failure to be mistaken for an empty hook.
+- `HOOKS.md`'s Discovery Routine now documents what the script does rather than instructing the reader to enumerate files by hand, and the silent fallback to "local agents only" is gone — losing the plugin's own bundled agents without saying so was itself a failure mode.
+
 ## [2.0.0] — 2026-06-26
 
 ### Added
