@@ -22,6 +22,17 @@ run_script() {
     "$plugin_root/hooks/discover-hooks.sh" "$@"
 }
 
+# Like run_script, but with CLAUDE_PROJECT_DIR unset, so the project is
+# resolved from the working directory instead. That path is how the script
+# actually runs from a skill — CLAUDE_PROJECT_DIR is not exported to a skill's
+# Bash calls — and run_script always setting it is why the bug in it went
+# unnoticed. Callers set the cwd (and HOME, where the boundary is under test).
+run_script_cwd() {
+  local plugin_root="$1"; shift
+  env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR \
+    "$plugin_root/hooks/discover-hooks.sh" "$@"
+}
+
 # Build a throwaway plugin root containing a copy of the real script plus an
 # agents/ dir composed from the named fixture files. The script self-locates
 # from ${BASH_SOURCE[0]}, so copying it in is how tests point it at fixture
@@ -31,8 +42,8 @@ run_script() {
 make_plugin_root() {
   local dest="$1"; shift
   mkdir -p "$dest/hooks" "$dest/agents"
-  cp "$REPO_ROOT/hooks/discover-hooks.sh" "$dest/hooks/"
-  chmod +x "$dest/hooks/discover-hooks.sh"
+  cp "$REPO_ROOT/hooks/discover-hooks.sh" "$REPO_ROOT/hooks/resolve-project-dir.sh" "$dest/hooks/"
+  chmod +x "$dest/hooks/discover-hooks.sh" "$dest/hooks/resolve-project-dir.sh"
   local f
   for f in "$@"; do
     cp "$FIXTURES/$f" "$dest/agents/"
