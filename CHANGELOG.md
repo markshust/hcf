@@ -4,6 +4,8 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-08-17
+
 ### Added
 - **Configurable plans directory** ([#1](https://github.com/markshust/hcf/pull/1), by [@michielgerritsen](https://github.com/michielgerritsen)). Plans live in `.claude/plans/` unless a project sets `plansDir` in an optional, user-owned `.claude/hcf.json`:
 
@@ -114,7 +116,8 @@ Initial public release.
 - **GitHub issue linking** — `plan-create` captures issue references (`Closes #N`, `Relates to #N`) and `plan-orchestrate` includes them in PR bodies for auto-close on merge.
 - MIT license.
 
-[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.1.1...HEAD
+[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.2.0...HEAD
+[2.2.0]: https://github.com/markshust/hcf/compare/hcf--v2.1.1...hcf--v2.2.0
 [2.1.1]: https://github.com/markshust/hcf/compare/hcf--v2.1.0...hcf--v2.1.1
 [2.1.0]: https://github.com/markshust/hcf/compare/hcf--v2.0.0...hcf--v2.1.0
 [2.0.0]: https://github.com/markshust/hcf/compare/hcf--v1.1.1...hcf--v2.0.0
