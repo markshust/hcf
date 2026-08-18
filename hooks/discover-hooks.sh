@@ -20,7 +20,7 @@
 #
 # Exit codes:
 #   0  success (including a legitimately empty hook)
-#   1  runtime error (plugin agents/ dir unresolvable)
+#   1  runtime error (plugin agents/ dir or project root unresolvable)
 #   2  bad arguments (incl. a malformed --expect value)
 #   3  enrollment validation failure (invalid phase or mode in an agent file)
 #   4  enrollment drift (--expect mismatch)
@@ -35,8 +35,9 @@ FP_VERSION="1"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_AGENTS="$SCRIPT_DIR/../agents"
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
-LOCAL_AGENTS="$PROJECT_DIR/.claude/agents"
+RESOLVER="$SCRIPT_DIR/resolve-project-dir.sh"
+# PROJECT_DIR and LOCAL_AGENTS are resolved after argument parsing, so --help
+# stays answerable from anywhere. See the resolution block below.
 
 HOOK_FILTER=""
 WANT_JSON=""
@@ -264,6 +265,31 @@ if [ ! -d "$PLUGIN_AGENTS" ]; then
   err "  the script must stay in the plugin's hooks/ directory alongside agents/"
   exit 1
 fi
+
+if [ ! -f "$RESOLVER" ]; then
+  err "project resolver not found at '$RESOLVER'"
+  err "  the script must stay in the plugin's hooks/ directory alongside resolve-project-dir.sh"
+  exit 1
+fi
+# shellcheck source=hooks/resolve-project-dir.sh
+. "$RESOLVER"
+
+# Refusing here is the point. Falling back to $PWD would enumerate the plugin's
+# agents alone and emit a well-formed answer that silently omits every
+# project-local agent — the failure this script exists to end.
+PROJECT_DIR="$(hcf_resolve_project_dir)"
+RESOLVE_STATUS=$?
+if [ "$RESOLVE_STATUS" -eq 2 ]; then
+  err "CLAUDE_PROJECT_DIR is set to '$CLAUDE_PROJECT_DIR', which is not a directory"
+  err "  correct it, or unset it to resolve from the working directory"
+  exit 1
+elif [ "$RESOLVE_STATUS" -ne 0 ]; then
+  err "cannot determine the project root from '$PWD'"
+  err "  no ancestor holds a .claude/ directory, and this is not a git repository"
+  err "  run from inside the project, or set CLAUDE_PROJECT_DIR to its path"
+  exit 1
+fi
+LOCAL_AGENTS="$PROJECT_DIR/.claude/agents"
 
 scan_dir "$PLUGIN_AGENTS" plugin
 

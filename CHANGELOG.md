@@ -4,6 +4,19 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+### Fixed
+- **Project-local agents were invisible whenever the working directory was not the project root**, and nothing said so — [#4](https://github.com/markshust/hcf/issues/4)'s failure class, a silent false-empty enrollment, reached by a route 2.1.0 did not close. Discovery resolved the project as `${CLAUDE_PROJECT_DIR:-$PWD}` and then skipped a missing `.claude/agents` as the ordinary case it usually is. But `CLAUDE_PROJECT_DIR` is not exported to a skill's Bash calls, so in practice the anchor was `$PWD` alone — and the working directory persists across a session's Bash calls, so a single earlier `cd` was enough. Discovery then enumerated the plugin's agents only, and returned a perfectly well-formed answer.
+
+  The visible damage came later. `plan-create` captures a fingerprint of the resolved enrollment and stores it with the plan; `plan-orchestrate` re-checks it at every hook. A fingerprint captured from the wrong directory records an enrollment the project never had, so the *next* run halts with `enrollment changed since this run started` and names a change nobody made. The documented remedy for that halt — delete the fingerprint and re-baseline — is also exactly what you would do to paper over a genuine enrollment change, so the guard trained you to ignore it.
+
+  Resolution now walks up from the working directory to the nearest ancestor containing `.claude/`, falling back to the enclosing git repository root — a project that has not created `.claude/` yet is still a project, and `plan-create` has no prerequisite on `project-setup`, so it can legitimately be the first HCF command run in a fresh repo. Running from a subdirectory resolves identically to running from the root, and **when nothing yields a root the script aborts with exit 1** instead of assuming one. `$HOME` bounds both fallbacks, so neither `~/.claude` nor a dotfiles repo is mistaken for a project.
+
+  `CLAUDE_PROJECT_DIR` still wins when set, and is still not required to contain a `.claude/` directory — but is now checked to be a directory at all. Set to a stale path, it used to produce the same silently-wrong enumeration one level up.
+
+### Added
+- `hooks/resolve-project-dir.sh` — the single implementation of project-root resolution, runnable on its own (`resolve-project-dir.sh` prints the root it found) and sourceable by other scripts. Following `discover-hooks.sh`'s precedent: path resolution that several callers depend on belongs in a script you can run and test, not in a snippet each caller reinvents.
+- 28 tests covering resolution, both `$HOME` boundaries, and the refusal (`./tests/run-tests.sh test-project-dir`). The previous suite always set `CLAUDE_PROJECT_DIR`, which is why the fallback beneath it went untested and the bug in it survived a release.
+
 ## [2.1.0] — 2026-07-26
 
 Primarily a bug-fix release. The two additions exist because fixing the bug

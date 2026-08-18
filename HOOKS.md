@@ -123,27 +123,39 @@ behavior is reviewable — not as steps for anyone to perform by hand.
 1. **Enumerate plugin agents.** Top-level `*.md` in the plugin's `agents/`
    directory, which the script resolves from its own location
    (`$(dirname "$0")/../agents`). Not recursive.
-2. **Enumerate local agents.** Top-level `*.md` in
-   `${CLAUDE_PROJECT_DIR:-$PWD}/.claude/agents`. A missing directory is normal,
-   not an error — most projects have none.
-3. **Parse frontmatter.** `name`, `phase`, `order`, `mode` from the **first**
+2. **Resolve the project root,** in order: `CLAUDE_PROJECT_DIR` when set (and a
+   directory — set but pointing nowhere is an error, not a fallback); else the
+   nearest ancestor of the working directory holding a `.claude/`; else the
+   enclosing git repository root, since a project that has not created
+   `.claude/` yet is still a project. `$HOME` bounds the last two, so neither
+   user-level Claude config nor a dotfiles repo is mistaken for a project.
+   Comparisons are made in physical (symlink-resolved) form, or a home reached
+   through a symlink would slip past that boundary. **When nothing yields a
+   root the script aborts with exit 1** rather than assuming the working
+   directory — guessing produces a well-formed enrollment that silently omits
+   every local agent, and a fingerprint captured that way stays wrong until it
+   surfaces as a drift halt naming a change that never happened.
+3. **Enumerate local agents.** Top-level `*.md` in `<project root>/.claude/agents`.
+   A missing directory is normal, not an error — most projects have none. A
+   missing *project* is not: see the step above.
+4. **Parse frontmatter.** `name`, `phase`, `order`, `mode` from the **first**
    `---` block only, anchored at start-of-line. A commented `# phase:` key is
    **not** enrollment (this is what keeps `standards-enforcer` dormant). Quoted
    values are unquoted; a trailing ` # …` comment is stripped from unquoted
    values, so the [example above](#frontmatter-schema) parses as written; CRLF
    files are handled. A file with no `phase` is simply not enrolled.
-4. **Merge with local override,** keyed on the frontmatter `name` — *not* the
+5. **Merge with local override,** keyed on the frontmatter `name` — *not* the
    filename. A local file **overrides** a plugin agent of the same `name`
    entirely; there is no field-level merge. Duplicate names within one directory
    warn and resolve last-wins.
-5. **Validate — fatally.** A `phase` outside the 8 hooks, or a `mode` other than
+6. **Validate — fatally.** A `phase` outside the 8 hooks, or a `mode` other than
    `single`/`batch`, **aborts with exit 3**, naming every offending file and the
    fix. Validation is **global**: a bad value in a `post-commit` agent aborts a
    `pre-plan` query, so the problem surfaces at the earliest moment rather than
    hours later. A non-numeric `order` is milder — it warns and falls back to
    `100`.
-6. **Filter** to `HOOK` when `--hook` is given.
-7. **Sort** by `order` ascending (missing = `100`), then `name`
+7. **Filter** to `HOOK` when `--hook` is given.
+8. **Sort** by `order` ascending (missing = `100`), then `name`
    case-insensitively. See [Sort and tie-break](#sort-and-tie-break).
 
 Other flags: `--json` for machine-readable output, `--fingerprint` /
