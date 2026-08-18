@@ -133,17 +133,25 @@ If the branch already exists (resuming a plan), check it out instead:
 git checkout feature/{plan-name}
 ```
 
-**Create plan directory:**
+**Resolve the plans directory,** once, and reuse `$PLANS_DIR` for every path below. It is `.claude/plans` unless the project overrides it in `.claude/hcf.json` (see [Plans Directory](#plans-directory) in the README). The script answers with an absolute path resolved from the project root, so the result does not depend on the working directory:
+
 ```bash
-mkdir -p .claude/plans/{plan-name}
+PLANS_DIR="$("{skill-base-dir}/../../hooks/resolve-plans-dir.sh")" || exit 1
 ```
 
-Use a kebab-case name derived from the feature (e.g., `user-authentication`, `payment-processing`).
+**Never substitute a hand-written `jq` line or a literal `.claude/plans`.** A non-zero exit means the project root or the configured value is unusable; surface the script's stderr verbatim and stop rather than falling back to the default — writing plans somewhere the project did not ask for is the failure this indirection exists to prevent.
+
+**Create plan directory:**
+```bash
+mkdir -p "$PLANS_DIR/{plan-name}"
+```
+
+Use a kebab-case name derived from the feature (e.g., `user-authentication`, `payment-processing`). Quote every path built from `$PLANS_DIR` — a configured directory may contain spaces.
 
 **Record the enrollment fingerprint** so `plan-orchestrate` can detect that hook enrollment changed between planning and execution. Write it by **redirecting a fresh invocation** — do not re-type the value captured at Phase 0:
 
 ```bash
-"{skill-base-dir}/../../hooks/discover-hooks.sh" --fingerprint > .claude/plans/{plan-name}/.hook-fingerprint
+"{skill-base-dir}/../../hooks/discover-hooks.sh" --fingerprint > "$PLANS_DIR/{plan-name}/.hook-fingerprint"
 ```
 
 The file holds exactly that one line and nothing else — no heading, no comment, no explanation. Writing it as a redirect rather than transcribing a remembered value is deliberate: Phases 1–2 are a long interactive stretch, and a value carried across them is exactly what gets lost and then invented.
@@ -294,13 +302,22 @@ On **exit 0 with output**, **PRINT that output verbatim** before spawning anythi
 **4. Spawn each agent in the resolved order**, sequentially:
 
 Use the Agent tool with `subagent_type="{agent-name}"`. The subagent prompt **must** include:
-1. The plan name (so it knows the plan directory path).
-2. The project's architecture context, pasted verbatim — do **not** summarize:
+1. The plan name.
+2. The **resolved** plan directory, so the agent never has to read `hcf.json` or guess a default:
+
+```
+## Plan Directory
+$PLANS_DIR/{plan-name}
+```
+
+3. The project's architecture context, pasted verbatim — do **not** summarize:
 
 ```
 ## Project Architecture
 {paste the COMPLETE content of <architecture> verbatim}
 ```
+
+Pass the concrete path, not the literal `$PLANS_DIR`. Subagents stay configuration-unaware by design: one resolver runs here, and every agent is handed a finished path.
 
 **5. After each subagent completes**, read any updated plan files to prepare the recap for the user.
 
@@ -360,7 +377,7 @@ Once approved:
 ```
 Plan created: {plan-name}
 
-Location: .claude/plans/{plan-name}/
+Location: $PLANS_DIR/{plan-name}/
 Total tasks: {N}
 Independent tasks (batch 1): {count of tasks with no dependencies}
 ```

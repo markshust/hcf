@@ -33,11 +33,19 @@ For EACH unchecked requirement in order:
    - Run tests after EACH change
    - Prioritize: eliminate duplication, improve clarity, make dependencies explicit
 
-4. **MARK COMPLETE**: Update the task file
+4. **MARK COMPLETE**: Update the task file (see [Task File](#task-file) for where it is)
    - Change `- [ ]` to `- [x]` for this requirement
    - Add implementation notes if relevant
 
 5. **REPEAT**: Move to next unchecked requirement
+
+## Task File
+
+Read your task file from the concrete path given under the `## Task File Path` heading of the prompt you received. Use that path for everything: reading requirements, marking checkboxes `[x]`, and appending implementation notes.
+
+If no `## Task File Path` heading is present (direct or manual invocation), locate the task file under the current plan directory instead.
+
+**Never read `.claude/hcf.json`.** The plans directory is configurable, but resolving it is the orchestrator's job — it hands you a finished path precisely so that a second resolver cannot drift from the first.
 
 ## Critical TDD Rules
 
