@@ -4,6 +4,11 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-08-17
+
+A single bug fix, in the same place 2.1.0 fixed one: the enrollment a run is
+built against must be the project's own, and must never be quietly substituted.
+
 ### Fixed
 - **Project-local agents were invisible whenever the working directory was not the project root**, and nothing said so — [#4](https://github.com/markshust/hcf/issues/4)'s failure class, a silent false-empty enrollment, reached by a route 2.1.0 did not close. Discovery resolved the project as `${CLAUDE_PROJECT_DIR:-$PWD}` and then skipped a missing `.claude/agents` as the ordinary case it usually is. But `CLAUDE_PROJECT_DIR` is not exported to a skill's Bash calls, so in practice the anchor was `$PWD` alone — and the working directory persists across a session's Bash calls, so a single earlier `cd` was enough. Discovery then enumerated the plugin's agents only, and returned a perfectly well-formed answer.
 
@@ -96,7 +101,8 @@ Initial public release.
 - **GitHub issue linking** — `plan-create` captures issue references (`Closes #N`, `Relates to #N`) and `plan-orchestrate` includes them in PR bodies for auto-close on merge.
 - MIT license.
 
-[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.1.0...HEAD
+[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.1.1...HEAD
+[2.1.1]: https://github.com/markshust/hcf/compare/hcf--v2.1.0...hcf--v2.1.1
 [2.1.0]: https://github.com/markshust/hcf/compare/hcf--v2.0.0...hcf--v2.1.0
 [2.0.0]: https://github.com/markshust/hcf/compare/hcf--v1.1.1...hcf--v2.0.0
 [1.1.1]: https://github.com/markshust/hcf/compare/hcf--v1.1.0...hcf--v1.1.1
