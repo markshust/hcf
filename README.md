@@ -20,6 +20,8 @@ Autonomous development plugin for Claude Code. Define requirements with a PM, th
   - [Skills](#skills)
   - [Outputs](#outputs)
 - [Architecture](#architecture)
+- [Advanced Configuration](#advanced-configuration)
+  - [Plans Directory](#plans-directory)
 - [Design Principles](#design-principles)
 - [Development](#development)
   - [Local Testing](#local-testing)
@@ -77,7 +79,7 @@ The `plan-create` skill activates automatically to:
 - Ask grounded clarifying questions categorized as **must-answer** vs **will-default-if-silent**
 - Break down into tasks with dependencies
 - Write requirements as test descriptions
-- Create `.claude/plans/user-auth/` with task files
+- Create `.claude/plans/user-auth/` with task files (or your configured [plans directory](#plans-directory))
 - Run **post-plan pipeline** agents (devil's advocate by default) to find gaps before execution
 
 After planning completes, you'll be asked:
@@ -264,7 +266,7 @@ Each task follows strict Red → Green → Refactor:
 | `code-standards.md` | Linting, formatting rules |
 | `architecture.md` | Directory structure, patterns |
 
-#### Plans (`.claude/plans/{name}/`)
+#### Plans (`.claude/plans/{name}/`, configurable — see [Plans Directory](#plans-directory))
 
 | File | Purpose |
 |------|---------|
@@ -351,6 +353,47 @@ hcf/
 The `CLAUDE.md` template that `/project-setup` generates for **your** project
 lives inline in `skills/project-setup/SKILL.md` — `.claude/CLAUDE.md` above is
 this repo's own config and has no effect on what users get.
+
+## Advanced Configuration
+
+HCF works with no configuration. Everything below is opt-in, and the defaults
+are what you get by leaving it alone.
+
+### Plans Directory
+
+Plans live in `.claude/plans/` by default. To put them somewhere else — beside
+your other docs, or at the repo root — create `.claude/hcf.json`:
+
+```json
+{
+  "plansDir": "docs/plans"
+}
+```
+
+`plansDir` is a path **relative to the project root**. Absolute paths and any
+`..` segment are rejected, because plan folders belong inside the repo they
+document.
+
+**No skill ever creates or modifies `.claude/hcf.json`.** `/hcf:project-setup`
+does not ask about it and `/hcf:project-update` only validates it if you have
+already written one. Its absence is the normal case, not an incomplete setup.
+
+**A malformed value stops the run rather than falling back.** If `plansDir` is
+absolute, escapes the project, or is set to an empty string, HCF reports it and
+refuses. Quietly writing plans to `.claude/plans` when you asked for
+`docs/plans` would be the worse outcome: you would find out much later, from
+the wrong directory filling up.
+
+**Changing it after plans exist means moving the folders yourself.** HCF does
+not migrate them; `/hcf:project-update` warns when `.claude/plans` still holds
+plan folders after a move. Keep the plans directory git-tracked, since plan
+files are committed alongside the work they describe.
+
+To see what a project resolves to:
+
+```bash
+$(claude plugin path hcf)/hooks/resolve-plans-dir.sh
+```
 
 ## Design Principles
 

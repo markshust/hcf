@@ -273,6 +273,8 @@ Tell the user:
 > To add your own gate, drop an agent file in `.claude/agents/` and give it a `phase` (one of the 8 hook points). A local agent with the same `name` overrides the plugin's. See `HOOKS.md` for the full hook list and frontmatter schema.
 > To see what is currently enrolled at each hook, run `$(claude plugin path hcf)/hooks/discover-hooks.sh` — that is the fastest answer whenever an agent doesn't fire.
 
+> **Advanced configuration note:** `.claude/hcf.json` is an optional, user-owned file (its only key today is `plansDir`). Setup never creates it, never modifies it, and never asks about it. If one already exists, leave it exactly as it is. Its absence is the normal case — do not mention it to the user during setup.
+
 **Create `CLAUDE.md` in project root:**
 
 This file provides always-on context for every Claude session. Keep it concise (~30-50 lines).

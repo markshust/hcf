@@ -115,6 +115,29 @@ Also scan `CLAUDE.md` for any **stale reference to `pipeline.md`** — either th
 
 Note any missing references.
 
+### Step 5b: Validate `.claude/hcf.json` (only if present)
+
+`.claude/hcf.json` is an optional, user-owned advanced config file. **Its absence is the normal case and must never be flagged, nor prompt a suggestion to create one.** Never create or modify it — this step only reports.
+
+If the file exists, run the resolver and let it do the judging rather than re-deriving the rules here:
+
+```bash
+"{skill-base-dir}/../../hooks/resolve-plans-dir.sh"
+```
+
+- **Exit 0** — the plans directory is valid. Record ✓ with the resolved path.
+- **Non-zero** — surface the script's stderr verbatim as a ⚠. It already names the offending value and the fix (absolute path, `..` segment, or an empty value). Do not paraphrase it, and do not attempt a repair: the correct value is the user's to choose.
+
+Then two checks the resolver cannot make, because both are about the project rather than the config:
+
+**Check A: the directory exists.** If resolution succeeded but the resolved directory does not exist, add:
+> ⚠ `.claude/hcf.json` — `plansDir` resolves to "{path}", which does not exist. Create it, or correct the value.
+
+**Check B: plans left behind by a move.** If resolution succeeded and the resolved directory is *not* `.claude/plans`, check whether `.claude/plans` still contains subdirectories. If it does, add:
+> ⚠ `.claude/hcf.json` — `plansDir` points at "{path}" but `.claude/plans` still contains plan folders. HCF does not migrate them; move them, or delete them if they are finished.
+
+All three findings use ⚠: none is auto-fixable, and each needs a decision only the user can make.
+
 ### Step 6: Report and Confirm
 
 Output a summary of everything found, using ✓ for current items, ✗ for items that need fixing, and ⚠ for items that need user attention:

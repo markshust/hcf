@@ -4,6 +4,19 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+### Added
+- **Configurable plans directory** ([#1](https://github.com/markshust/hcf/pull/1), by [@michielgerritsen](https://github.com/michielgerritsen)). Plans live in `.claude/plans/` unless a project sets `plansDir` in an optional, user-owned `.claude/hcf.json`:
+
+  ```json
+  { "plansDir": "docs/plans" }
+  ```
+
+  No skill creates or modifies that file, `project-setup` never asks about it, and with it absent everything behaves exactly as before. `plansDir` must be relative to the project root; absolute paths and `..` segments are rejected. Changing it once plans exist means moving the folders yourself — HCF does not migrate them, and `project-update` warns when `.claude/plans` still holds plan folders after a move.
+
+  Resolution is `hooks/resolve-plans-dir.sh`, built on 2.1.1's project anchor, so the answer does not depend on the working directory and the `.hook-fingerprint` written beside a plan follows `plansDir` with it. **A malformed value stops the run instead of falling back to the default** — quietly writing plans somewhere the project did not ask for is the failure mode this whole area keeps producing, and the resolver deliberately does not add another instance of it. No `jq` dependency, for the same reason: a missing `jq` would turn a configured `plansDir` into a silent default on Debian minimal and Alpine.
+
+  Subagents stay configuration-unaware. `plan-orchestrate` passes each `tdd-worker` a concrete `## Task File Path`, `plan-create` passes post-plan agents a concrete `## Plan Directory`, and both agents are told never to read `hcf.json` — one resolver runs per skill, so there is no second resolver to drift from the first.
+
 ## [2.1.1] — 2026-08-17
 
 A single bug fix, in the same place 2.1.0 fixed one: the enrollment a run is

@@ -20,13 +20,23 @@ Example: `plan-orchestrate user-auth`
 
 ## Prerequisites
 
-1. Plan must exist at `.claude/plans/{plan-name}/`
+**First, resolve the plans directory,** once, and reuse `$PLANS_DIR` for every path below. It is `.claude/plans` unless the project overrides it in `.claude/hcf.json` (see [Plans Directory](#plans-directory) in the README). The script answers with an absolute path resolved from the project root, so the result does not depend on the working directory:
+
+```bash
+PLANS_DIR="$("{skill-base-dir}/../../hooks/resolve-plans-dir.sh")" || exit 1
+```
+
+**Never substitute a hand-written `jq` line or a literal `.claude/plans`.** A non-zero exit means the project root or the configured value is unusable; surface the script's stderr verbatim and stop. Quote every path built from `$PLANS_DIR` — a configured directory may contain spaces.
+
+Then:
+
+1. Plan must exist at `$PLANS_DIR/{plan-name}/`
 2. Project must be configured (`.claude/testing.md` exists)
 3. Plan status must be `ready` or `in_progress`
 
 Check prerequisites:
 ```bash
-ls .claude/plans/{plan-name}/_plan.md .claude/testing.md 2>/dev/null
+ls "$PLANS_DIR/{plan-name}/_plan.md" .claude/testing.md 2>/dev/null
 ```
 
 If not found, output error and stop.
@@ -85,8 +95,8 @@ Before starting execution, check if the ralph-wiggum plugin is installed by look
 ### Step 1: Load Plan Context
 
 Read plan files:
-- `.claude/plans/{plan-name}/_plan.md` - Plan overview
-- `.claude/plans/{plan-name}/*.md` - All task files (excluding _plan.md)
+- `$PLANS_DIR/{plan-name}/_plan.md` - Plan overview
+- `$PLANS_DIR/{plan-name}/*.md` - All task files (excluding _plan.md)
 
 Note: Testing and code standards are auto-included above.
 
@@ -102,19 +112,19 @@ Build a dependency graph as a data structure.
 ### Step 2: Update Plan Status
 
 If plan status is `ready`, change to `in_progress`:
-- Edit `.claude/plans/{plan-name}/_plan.md`
+- Edit `$PLANS_DIR/{plan-name}/_plan.md`
 - Set `## Status` to `in_progress`
 
 **Establish the run fingerprint.** Every hook call below passes this back via
 `--expect=`, so that agent files changing mid-run halt the orchestration rather
 than silently swapping the pipeline. Read
-`.claude/plans/{plan-name}/.hook-fingerprint` and handle three distinct states —
+`$PLANS_DIR/{plan-name}/.hook-fingerprint` and handle three distinct states —
 conflating them is the mistake to avoid:
 
 | State | Action |
 |-------|--------|
 | **Present and parseable** (one line: `discover-hooks-fingerprint-v1 <64-hex>`) | Use it as `$RUN_FINGERPRINT`. Pass the file's contents **verbatim** — do not trim, reformat, or re-derive them. |
-| **Missing** | Not an error. Plans created before this feature have none. Capture one and write it to the plan directory so a resumed run is covered too, then continue: `"{skill-base-dir}/../../hooks/discover-hooks.sh" --fingerprint > .claude/plans/{plan-name}/.hook-fingerprint` |
+| **Missing** | Not an error. Plans created before this feature have none. Capture one and write it to the plan directory so a resumed run is covered too, then continue: `"{skill-base-dir}/../../hooks/discover-hooks.sh" --fingerprint > "$PLANS_DIR/{plan-name}/.hook-fingerprint"` |
 | **Present but unparseable** (empty, truncated, prose, wrong length) | **Halt.** Do not silently recapture — that would mask a botched write. Tell the user to delete the file to re-baseline. |
 
 **Never reconstruct, abbreviate, or recall a fingerprint from memory.** It is
@@ -305,10 +315,10 @@ exit stops the run before the commit** — see [Hook Discovery](#hook-discovery)
 First, update `_plan.md` status to `completed`. Then stage and commit everything together in a **single commit**:
 ```bash
 # 1. Update plan status BEFORE committing
-# (edit .claude/plans/{plan-name}/_plan.md — set Status to "completed")
+# (edit $PLANS_DIR/{plan-name}/_plan.md — set Status to "completed")
 
 # 2. Stage everything: implementation + hook agent fixes + plan files (including updated status)
-git add -A .claude/plans/{plan-name}/
+git add -A "$PLANS_DIR/{plan-name}/"
 git add -A
 git commit -m "feat({plan-name}): {plan title summary}"
 ```
@@ -376,6 +386,9 @@ All Task tool calls MUST be made in a SINGLE message to enable parallel executio
 > Do NOT summarize. Subagents have no access to CLAUDE.md or project files beyond what you provide.**
 
 ```markdown
+## Task File Path
+{the concrete resolved path, e.g. $PLANS_DIR/{plan-name}/{task-file}.md}
+
 ## Project Testing Configuration
 {paste the COMPLETE content of <testing> verbatim — do NOT summarize}
 
@@ -387,6 +400,8 @@ All Task tool calls MUST be made in a SINGLE message to enable parallel executio
 ```
 
 The tdd-worker agent already has all TDD methodology and rules. The prompt needs the project-specific configuration and task details since subagents do not inherit CLAUDE.md context.
+
+Pass the **concrete** path under `## Task File Path`, not the literal `$PLANS_DIR` — the worker marks checkboxes and appends implementation notes there, and it must never read `.claude/hcf.json` or assume a default to find it. One resolver runs in this skill; every subagent is handed a finished path.
 
 ### Step 6: Collect Results
 

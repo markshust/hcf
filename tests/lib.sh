@@ -42,8 +42,10 @@ run_script_cwd() {
 make_plugin_root() {
   local dest="$1"; shift
   mkdir -p "$dest/hooks" "$dest/agents"
-  cp "$REPO_ROOT/hooks/discover-hooks.sh" "$REPO_ROOT/hooks/resolve-project-dir.sh" "$dest/hooks/"
-  chmod +x "$dest/hooks/discover-hooks.sh" "$dest/hooks/resolve-project-dir.sh"
+  cp "$REPO_ROOT/hooks/discover-hooks.sh" "$REPO_ROOT/hooks/resolve-project-dir.sh" \
+    "$REPO_ROOT/hooks/resolve-plans-dir.sh" "$dest/hooks/"
+  chmod +x "$dest/hooks/discover-hooks.sh" "$dest/hooks/resolve-project-dir.sh" \
+    "$dest/hooks/resolve-plans-dir.sh"
   local f
   for f in "$@"; do
     cp "$FIXTURES/$f" "$dest/agents/"
