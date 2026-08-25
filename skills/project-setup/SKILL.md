@@ -132,15 +132,6 @@ Create the `.claude/` directory and all config files:
 mkdir -p .claude
 ```
 
-**Add `.claude/ralph-loop.local.md` to `.gitignore`:**
-
-Check if `.gitignore` exists and whether it already contains the entry. If not, append it:
-
-```bash
-# Ensure ralph-wiggum local state is gitignored
-grep -qxF '.claude/ralph-loop.local.md' .gitignore 2>/dev/null || echo '.claude/ralph-loop.local.md' >> .gitignore
-```
-
 > **Note**: The templates below show the minimum required sections. Expand each file with additional relevant details based on project complexity. For example, a framework project might include extensive architecture docs, while a simple app might stick closer to the minimum.
 
 **Create `.claude/testing.md`:**
@@ -332,35 +323,7 @@ Project configuration files are in `.claude/`:
 - `code-standards.md` - Coding conventions
 ```
 
-### Step 7: Prompt for Ralph Wiggum Installation
-
-For large plans that may exceed context limits, the ralph-wiggum plugin provides session persistence. Ask the user:
-
-> **Optional: Install ralph-wiggum for session persistence?**
->
-> The ralph-wiggum plugin enables autonomous execution of large plans (20+ tasks)
-> by automatically recovering when context limits are reached.
->
-> Install now? (y/n)
-
-If yes, run the installation commands:
-
-```bash
-# Add the Anthropic marketplace (if not already added)
-/plugin marketplace add anthropics/claude-code
-
-# Install ralph-wiggum
-/plugin install ralph-wiggum@claude-code-plugins
-```
-
-If no, inform them they can install later:
-> You can install it anytime with:
-> ```
-> /plugin marketplace add anthropics/claude-code
-> /plugin install ralph-wiggum@claude-code-plugins
-> ```
-
-### Step 8: Confirm Completion
+### Step 7: Confirm Completion
 
 After creating all files, output:
 
@@ -369,7 +332,6 @@ After creating all files, output:
 ✓ Created .claude/testing.md
 ✓ Created .claude/code-standards.md
 ✓ Created .claude/architecture.md
-{✓ Installed ralph-wiggum plugin (if installed)}
 
 Project configured for autonomous development!
 

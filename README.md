@@ -95,15 +95,15 @@ If you chose "later" or want to re-run, say:
 "Run the user-auth plan" or "Execute the plan"
 ```
 
-The `plan-orchestrate` skill auto-triggers. It verifies you're on the correct `feature/{plan-name}` branch before starting, and **automatically uses ralph-wiggum** for session persistence if installed. If not installed, you'll see a warning but execution continues.
+The `plan-orchestrate` skill auto-triggers. It verifies you're on the correct `feature/{plan-name}` branch before starting.
+
+Session persistence is native to Claude Code — no plugin required. Auto-compaction handles context limits, and all run state (task statuses, requirement checkboxes, retry counts) lives in the plan files, so an interrupted run resumes by re-running the plan. For large plans, you can optionally set a goal first so execution completes unattended:
+
+```
+/goal the user-auth plan run reached a terminal state: plan-orchestrate output ALL_TASKS_COMPLETE or TASKS_BLOCKED
+```
 
 After completion, you'll be prompted to push the branch and create a PR (never done without your permission).
-
-ralph-wiggum is prompted during `/project-setup`, or install manually:
-```bash
-/plugin marketplace add anthropics/claude-code
-/plugin install ralph-wiggum@claude-code-plugins
-```
 
 ## How It Works
 

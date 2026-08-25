@@ -388,15 +388,16 @@ Independent tasks (batch 1): {count of tasks with no dependencies}
 >
 > 1. **Yes, start now** - I'll trigger `plan-orchestrate` immediately
 > 2. **No, I'll run it later** - Say "run the {plan-name} plan" anytime to start
+>
+> Optional, for large plans: set a goal first so execution completes unattended —
+> `/goal the {plan-name} plan run reached a terminal state: plan-orchestrate output ALL_TASKS_COMPLETE or TASKS_BLOCKED`
 
 5. If user chooses to start now:
    - Invoke the `plan-orchestrate` skill with the plan name to begin parallel execution
-   - The orchestrator automatically uses ralph-wiggum if installed (warns if not)
    - Loops through all batches until complete
 
 6. If user chooses later:
    - Confirm they can start anytime by saying "run the {plan-name} plan" or "execute the plan"
-   - Note: ralph-wiggum is used automatically if installed
    - End the skill
 
 ## Writing Good Requirements
