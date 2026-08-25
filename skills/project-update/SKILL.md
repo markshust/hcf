@@ -40,7 +40,7 @@ Collect the list of missing files. Do NOT act on them yet — just note them.
 
 ### Step 3: Migrate Legacy `pipeline.md` to Frontmatter
 
-This is a **one-time migration** from the legacy central registry (`.claude/pipeline.md`) to per-agent frontmatter enrollment (the model described in [HOOKS.md](../../HOOKS.md)). This step **detects** what needs to happen here; the actual changes are applied in Step 7 after a single confirmation.
+This is a **one-time migration** from the legacy central registry (`.claude/pipeline.md`) to per-agent frontmatter enrollment (the model described in [HOOKS.md](../../HOOKS.md)). This step **detects** what needs to happen here; the actual changes are applied in Step 6 after a single confirmation.
 
 #### 3a. Detect the legacy file
 
@@ -93,29 +93,19 @@ For each `(phase, position, name)`, resolve the agent against both `.claude/agen
    - `mode`: apply the **legacy body heuristic exactly once, here** (its last use ever): read the agent's **body** — if it mentions operating in **"batch"** or over a **"file list"**, stamp `mode: batch`; otherwise `mode: single`.
    - No `on-failure` or any other field — the schema (HOOKS.md) defines only `phase`, `order`, `mode`.
 
-Record this plan; it is applied in Step 7. **Never change what the project runs:** an agent already enrolled by the plugin is left alone; a genuinely-local agent is stamped; a plugin agent the project had enabled is copied + stamped so it keeps running; a dangling reference is reported. The end state reproduces the project's effective pre-migration pipeline exactly.
+Record this plan; it is applied in Step 6. **Never change what the project runs:** an agent already enrolled by the plugin is left alone; a genuinely-local agent is stamped; a plugin agent the project had enabled is copied + stamped so it keeps running; a dangling reference is reported. The end state reproduces the project's effective pre-migration pipeline exactly.
 
-### Step 4: Check .gitignore Entries
-
-Verify that `.gitignore` contains required entries:
-
-```
-.claude/ralph-loop.local.md
-```
-
-For each missing entry, append it to `.gitignore`.
-
-### Step 5: Check CLAUDE.md References
+### Step 4: Check CLAUDE.md References
 
 Read the project's `CLAUDE.md` and verify it references the `.claude/` config files: `testing.md`, `code-standards.md`, and `architecture.md`.
 
-Also check whether `CLAUDE.md` contains a **Feature Development section** that wires up the planning workflow. Detect it by searching for a mention of the `hcf:plan-create` skill (a project may title the section differently, so match on the skill reference, not the heading text). If no reference to `plan-create` exists anywhere in `CLAUDE.md`, the section is **missing** — flag it for **automatic addition** in Step 7. This matters because without it `CLAUDE.md` never tells Claude to route feature work through HCF, and a strongly-worded "do this instead" elsewhere in `CLAUDE.md` (e.g. "start from this checklist") can suppress the skill's auto-trigger. If a `plan-create` reference already exists, record it as ✓ and do not touch it (the project may have customized the wording).
+Also check whether `CLAUDE.md` contains a **Feature Development section** that wires up the planning workflow. Detect it by searching for a mention of the `hcf:plan-create` skill (a project may title the section differently, so match on the skill reference, not the heading text). If no reference to `plan-create` exists anywhere in `CLAUDE.md`, the section is **missing** — flag it for **automatic addition** in Step 6. This matters because without it `CLAUDE.md` never tells Claude to route feature work through HCF, and a strongly-worded "do this instead" elsewhere in `CLAUDE.md` (e.g. "start from this checklist") can suppress the skill's auto-trigger. If a `plan-create` reference already exists, record it as ✓ and do not touch it (the project may have customized the wording).
 
-Also scan `CLAUDE.md` for any **stale reference to `pipeline.md`** — either the `<pipeline>` include block, or a config-file bullet/link an older `project-setup` left behind (e.g. `` - `pipeline.md` - Autonomous development workflow agents `` under a "Files" / "Detailed Configuration" section). `pipeline.md` is legacy and no longer read, so any such reference must go. Flag every stale reference for **automatic removal** in Step 7. This is independent of the Step 3 migration: a project that already migrated (so `pipeline.md` is gone) can still carry a stale reference, and this run must clean it.
+Also scan `CLAUDE.md` for any **stale reference to `pipeline.md`** — either the `<pipeline>` include block, or a config-file bullet/link an older `project-setup` left behind (e.g. `` - `pipeline.md` - Autonomous development workflow agents `` under a "Files" / "Detailed Configuration" section). `pipeline.md` is legacy and no longer read, so any such reference must go. Flag every stale reference for **automatic removal** in Step 6. This is independent of the Step 3 migration: a project that already migrated (so `pipeline.md` is gone) can still carry a stale reference, and this run must clean it.
 
 Note any missing references.
 
-### Step 5b: Validate `.claude/hcf.json` (only if present)
+### Step 4b: Validate `.claude/hcf.json` (only if present)
 
 `.claude/hcf.json` is an optional, user-owned advanced config file. **Its absence is the normal case and must never be flagged, nor prompt a suggestion to create one.** Never create or modify it — this step only reports.
 
@@ -138,7 +128,7 @@ Then two checks the resolver cannot make, because both are about the project rat
 
 All three findings use ⚠: none is auto-fixable, and each needs a decision only the user can make.
 
-### Step 6: Report and Confirm
+### Step 5: Report and Confirm
 
 Output a summary of everything found, using ✓ for current items, ✗ for items that need fixing, and ⚠ for items that need user attention:
 
@@ -156,9 +146,6 @@ Pipeline migration:
       • devils-advocate    (post-plan)          → already provided by the plugin; no action
       • standards-enforcer (post-implementation) → enabled via frontmatter (copied into .claude/agents/ so it keeps running; won't auto-update with the plugin)
 
-.gitignore:
-  ✓ .claude/ralph-loop.local.md — present
-
 CLAUDE.md References:
   ✓ testing.md — referenced
   ✓ code-standards.md — referenced
@@ -167,9 +154,9 @@ CLAUDE.md References:
   ⚠ pipeline.md — stale reference(s) found; will remove automatically (legacy, no longer read)
 ```
 
-The `✗ Feature Development section — missing` line appears only when `CLAUDE.md` has no reference to `hcf:plan-create`. It is added automatically in Step 7 (purely additive — a new section, no existing content is changed). Omit the line when a `plan-create` reference already exists.
+The `✗ Feature Development section — missing` line appears only when `CLAUDE.md` has no reference to `hcf:plan-create`. It is added automatically in Step 6 (purely additive — a new section, no existing content is changed). Omit the line when a `plan-create` reference already exists.
 
-The `⚠ pipeline.md — stale reference(s) found` line appears only when `CLAUDE.md` still references the legacy file (the `<pipeline>` include and/or a config-file bullet). Those are scrubbed automatically in Step 7 — independent of any migration, so this line can appear even for a project that already migrated. Omit the line when there are no such references.
+The `⚠ pipeline.md — stale reference(s) found` line appears only when `CLAUDE.md` still references the legacy file (the `<pipeline>` include and/or a config-file bullet). Those are scrubbed automatically in Step 6 — independent of any migration, so this line can appear even for a project that already migrated. Omit the line when there are no such references.
 
 The **Pipeline migration** line reflects the Step 3 detection and is one of:
 
@@ -184,9 +171,9 @@ When a customized `pipeline.md` is present, also include this note so the situat
 If there are any ✗ or ⚠ items, ask the user a **single** confirmation:
 > I found {N} items that need attention (including a one-time `pipeline.md` → frontmatter migration). Want me to apply them? The migration runs in one automatic pass — no per-agent prompts.
 
-If the user confirms, proceed to Step 7 and apply **everything** (including the full migration) in a single pass. If everything is current, output "All up to date!" and stop.
+If the user confirms, proceed to Step 6 and apply **everything** (including the full migration) in a single pass. If everything is current, output "All up to date!" and stop.
 
-### Step 7: Apply Fixes
+### Step 6: Apply Fixes
 
 Process each fixable item in order. **Never overwrite existing files. Never modify files without confirmation.**
 
@@ -202,7 +189,7 @@ For each missing file, generate it by auto-detecting from the project context �
 
 #### Legacy `pipeline.md` migration (one automatic pass)
 
-If Step 3 found a legacy `.claude/pipeline.md`, run the **entire** migration now, automatically, in a **single pass** — there are **no per-agent prompts** (the one confirmation in Step 6 already covers all of it):
+If Step 3 found a legacy `.claude/pipeline.md`, run the **entire** migration now, automatically, in a **single pass** — there are **no per-agent prompts** (the one confirmation in Step 5 already covers all of it):
 
 1. **No-op-delete case** (unchanged default): delete `.claude/pipeline.md`. The shipped `devils-advocate` frontmatter already reproduces the default, so nothing is stamped.
 
@@ -217,7 +204,7 @@ If Step 3 found a legacy `.claude/pipeline.md`, run the **entire** migration now
 
 #### Scrub stale `pipeline.md` references from `CLAUDE.md` (automatic; always runs)
 
-`pipeline.md` is legacy and no longer read, so `CLAUDE.md` must not reference it. Remove **every** stale reference flagged in Step 5 **automatically** — edit `CLAUDE.md` directly, do not merely suggest. This runs regardless of whether a migration happened this session (a project that migrated earlier may still carry a stale reference):
+`pipeline.md` is legacy and no longer read, so `CLAUDE.md` must not reference it. Remove **every** stale reference flagged in Step 4 **automatically** — edit `CLAUDE.md` directly, do not merely suggest. This runs regardless of whether a migration happened this session (a project that migrated earlier may still carry a stale reference):
 
 1. **The `<pipeline>` include block, if present** (only HCF's own repo `CLAUDE.md` has one; a generated user `CLAUDE.md` normally does not):
 
@@ -231,11 +218,11 @@ If Step 3 found a legacy `.claude/pipeline.md`, run the **entire** migration now
 
 2. **Any other line referencing `pipeline.md`** — e.g. a config-file inventory bullet such as `` - `pipeline.md` - Autonomous development workflow agents `` under a "Files" / "Detailed Configuration" section. Remove each such line, leaving the surrounding lines and the section heading intact (do not delete the whole section).
 
-After scrubbing, `CLAUDE.md` must contain zero references to `pipeline.md`. List each removed line in the Step 8 summary.
+After scrubbing, `CLAUDE.md` must contain zero references to `pipeline.md`. List each removed line in the Step 7 summary.
 
 #### Missing Feature Development section (automatic; additive)
 
-If Step 5 flagged the Feature Development section as missing (no `hcf:plan-create` reference anywhere in `CLAUDE.md`), add it automatically. This is purely additive — insert a new section, never rewrite or remove existing content. Place it **as the first section**, immediately after the title (`# ...`) and any 1–2 line project description that follows it, and **before the first `##` heading**. Prominence is intentional: an early section reliably overrides competing directives elsewhere in `CLAUDE.md` (e.g. "start from this checklist") that would otherwise suppress the planning trigger. Insert this block verbatim — it is intentionally project-agnostic:
+If Step 4 flagged the Feature Development section as missing (no `hcf:plan-create` reference anywhere in `CLAUDE.md`), add it automatically. This is purely additive — insert a new section, never rewrite or remove existing content. Place it **as the first section**, immediately after the title (`# ...`) and any 1–2 line project description that follows it, and **before the first `##` heading**. Prominence is intentional: an early section reliably overrides competing directives elsewhere in `CLAUDE.md` (e.g. "start from this checklist") that would otherwise suppress the planning trigger. Insert this block verbatim — it is intentionally project-agnostic:
 
 ```markdown
 ## Feature Development
@@ -253,11 +240,7 @@ Do this only when no `plan-create` reference exists — never duplicate or overw
 
 Report which config files aren't referenced and suggest the snippet to add. Do NOT modify `CLAUDE.md` automatically — show the user what to add and let them decide.
 
-#### Missing .gitignore entries
-
-Append silently — these are non-destructive housekeeping entries.
-
-### Step 8: Final Summary
+### Step 7: Final Summary
 
 After all fixes are applied, output:
 
@@ -280,7 +263,7 @@ If the migration was a no-op delete, the summary instead reads `✓ Removed redu
 
 - The migration resolves each entry against the plugin dir (two levels up from this skill file) to classify it. If the plugin directory cannot be resolved, report the error and do NOT delete `pipeline.md` until every entry is classified — surface the unresolved entries and leave the file in place so nothing is silently dropped or disabled.
 - The migration copies a plugin agent into `.claude/agents/` **only** to preserve an enablement the plugin default doesn't provide (case 3 — a dormant plugin agent the project had turned on); it never copies one the plugin already enrolls (that would be a redundant shadow). When stamping an existing local agent, edit it in place to add `phase`/`order`/`mode` — never replace it wholesale.
-- **Removing stale `pipeline.md` references from `CLAUDE.md` is automatic** — `pipeline.md` is legacy and no longer read, so it must not be referenced (see Step 7's scrub subsection; this runs even when no migration happened). **Adding** missing config-file references (Step 7 "Missing CLAUDE.md references") stays suggest-only — never auto-add those.
+- **Removing stale `pipeline.md` references from `CLAUDE.md` is automatic** — `pipeline.md` is legacy and no longer read, so it must not be referenced (see Step 6's scrub subsection; this runs even when no migration happened). **Adding** missing config-file references (Step 6 "Missing CLAUDE.md references") stays suggest-only — never auto-add those.
 - **Adding a missing Feature Development section to `CLAUDE.md` is automatic** but **purely additive** — append the project-agnostic block, never rewrite or delete existing content, and never add it when a `plan-create` reference already exists (the project may have customized the wording). This is what carries the workflow wiring across an upgrade from a pre-frontmatter version.
 - **Never change what the project runs.** Every agent active in the legacy `pipeline.md` ends up enrolled the same way under frontmatter — via the plugin default, an in-place stamp, or a copy-to-enable. Only a truly unresolvable entry is reported and skipped, with `pipeline.md` left in place so the enrollment isn't lost.
 - If auto-detection fails for a generated file, ask the user the relevant questions interactively (same as project-setup would)

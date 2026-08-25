@@ -65,32 +65,30 @@ If the current branch is not `feature/{plan-name}`:
 
 ## Execution Algorithm
 
-### Step 0: Check for Ralph Wiggum Plugin
+### Step 0: Suggest Unattended Completion via /goal
 
-Before starting execution, check if the ralph-wiggum plugin is installed by looking at the available skills listed in the system reminder. If skills like `ralph-wiggum:ralph-loop`, `ralph-wiggum:help`, or `ralph-wiggum:cancel-ralph` appear in the available skills list, the plugin is installed.
+Claude Code's built-in `/goal` command keeps a session working toward a
+verifiable end state — its evaluator runs after each turn and pushes execution
+to continue until the condition is met. Only the user can set a goal (`/goal`
+is a user-typed command and cannot be invoked from a skill), so surface a
+copy-pasteable tip and continue immediately. This is informational, never a
+gate — do not wait for a response.
 
-**Do NOT use `claude plugin list` via Bash** — this command does not work from inside a Claude Code session and will produce false negatives.
+Display:
 
-**If ralph-wiggum IS installed (skills are listed):**
-- Automatically wrap execution with ralph-wiggum for session persistence
-- Invoke: `/ralph-wiggum:loop "plan-orchestrate {plan-name}" --completion-promise "ALL_TASKS_COMPLETE" --max-iterations 100`
-- This ensures the orchestrator continues even if context limits are reached
+```
+Tip: for large plans, you can keep this run going unattended with Claude Code's
+built-in /goal command (interrupt me now to set it, or set it before a future run):
 
-**If ralph-wiggum is NOT installed (skills are not listed):**
-- Display a warning:
-  ```
-  WARNING: ralph-wiggum plugin is not installed.
+  /goal the {plan-name} plan run reached a terminal state: plan-orchestrate output ALL_TASKS_COMPLETE or TASKS_BLOCKED
 
-  For large plans, execution may stop if context limits are reached.
-  The orchestrator will continue, but session persistence is not available.
+Either way, an interrupted run resumes from disk — just re-run plan-orchestrate {plan-name}.
+```
 
-  To install ralph-wiggum for automatic session recovery:
-    claude plugin marketplace add anthropics/claude-code
-    claude plugin install ralph-wiggum@claude-code-plugins
-
-  Continuing without ralph-wiggum...
-  ```
-- Continue with execution (the orchestrator will still work, but without session persistence)
+The suggested condition deliberately names **both** terminal outputs. A goal
+phrased as only `ALL_TASKS_COMPLETE` leaves the evaluator demanding more turns
+after a legitimately blocked run, when the correct behavior is to stop and
+report the blockage.
 
 ### Step 1: Load Plan Context
 
@@ -476,16 +474,21 @@ If a previously passing test starts failing:
 - Worker should report TASK_FAILED
 - Investigation needed - likely a breaking change
 
-## Session Persistence (Automatic)
+## Session Persistence
 
-The orchestrator automatically uses ralph-wiggum for session persistence if installed (see Step 0).
+Session persistence is native to Claude Code — no plugin is required:
 
-- If ralph-wiggum is installed: Execution automatically wraps with `/ralph-wiggum:loop` for session recovery
-- If not installed: A warning is shown, but execution continues without persistence
-
-The orchestrator outputs `ALL_TASKS_COMPLETE` when done, which satisfies ralph-wiggum's completion promise.
-
-If blocked, it outputs `TASKS_BLOCKED: [...]` which will NOT satisfy the promise, but provides visibility into what's blocking progress.
+- **Context limits are not a failure mode.** When the conversation grows long,
+  auto-compaction summarizes it and execution continues.
+- **All run state lives on disk.** Task statuses, requirement checkboxes, and
+  retry counts are stored in the plan files, so re-running
+  `plan-orchestrate {plan-name}` resumes exactly where a previous run stopped
+  (see [Handling Edge Cases](#handling-edge-cases)).
+- **Unattended completion is the user's opt-in** via the built-in `/goal`
+  command (see Step 0). The orchestrator's terminal outputs are the goal's
+  verifiable end states: `ALL_TASKS_COMPLETE` on success, `TASKS_BLOCKED: [...]`
+  when no progress is possible. Both are terminal — a blocked run ends the goal
+  too, rather than leaving it spinning.
 
 ## Output Summary
 

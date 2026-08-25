@@ -4,6 +4,13 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+### Changed
+- **Session persistence now relies on Claude Code natively; the ralph-wiggum integration is removed.** Its rationale is obsolete — sessions no longer die at context limits, auto-compaction summarizes and continues — and the integration never worked as documented anyway: `plan-orchestrate` told Claude to invoke `/ralph-wiggum:loop`, but the plugin's actual command is `ralph-loop`, and both its commands are marked `hide-from-slash-command-tool`, so Claude could never invoke them itself in the first place.
+
+  In its place, `plan-orchestrate` (Step 0) and `plan-create` (the "ready to begin?" prompt) surface a copy-pasteable tip for Claude Code's built-in `/goal` command — `/goal` is user-typed and cannot be started by a skill, so a tip is the honest integration. The suggested condition deliberately covers **both** terminal outputs, `ALL_TASKS_COMPLETE` and `TASKS_BLOCKED`, so a legitimately blocked run ends the goal instead of leaving its evaluator demanding progress that cannot happen.
+
+  `project-setup` no longer prompts to install ralph-wiggum and no longer writes the `.claude/ralph-loop.local.md` gitignore entry; `project-update` no longer checks for it (a stale entry in an existing project is harmless and left alone). Plan and task file formats are unchanged, interrupted runs still resume from on-disk state, and anyone who prefers ralph-wiggum can still start it manually — the orchestrator's terminal outputs satisfy its completion promise exactly as before.
+
 ## [2.2.0] — 2026-08-17
 
 ### Added
