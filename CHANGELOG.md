@@ -4,6 +4,8 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-08-25
+
 ### Changed
 - **Session persistence now relies on Claude Code natively; the ralph-wiggum integration is removed.** Its rationale is obsolete — sessions no longer die at context limits, auto-compaction summarizes and continues — and the integration never worked as documented anyway: `plan-orchestrate` told Claude to invoke `/ralph-wiggum:loop`, but the plugin's actual command is `ralph-loop`, and both its commands are marked `hide-from-slash-command-tool`, so Claude could never invoke them itself in the first place.
 
@@ -123,7 +125,8 @@ Initial public release.
 - **GitHub issue linking** — `plan-create` captures issue references (`Closes #N`, `Relates to #N`) and `plan-orchestrate` includes them in PR bodies for auto-close on merge.
 - MIT license.
 
-[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.2.0...HEAD
+[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.3.0...HEAD
+[2.3.0]: https://github.com/markshust/hcf/compare/hcf--v2.2.0...hcf--v2.3.0
 [2.2.0]: https://github.com/markshust/hcf/compare/hcf--v2.1.1...hcf--v2.2.0
 [2.1.1]: https://github.com/markshust/hcf/compare/hcf--v2.1.0...hcf--v2.1.1
 [2.1.0]: https://github.com/markshust/hcf/compare/hcf--v2.0.0...hcf--v2.1.0
