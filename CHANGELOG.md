@@ -4,6 +4,8 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [2.3.1] — 2026-09-21
+
 ### Changed
 - **Plan files are no longer committed** ([#15](https://github.com/markshust/hcf/issues/15)). Plans are ephemeral: they're the working state of one run, and once the work lands the code and tests are the source of truth. A committed plan goes stale as soon as the feature changes and misleads any agent that reads it later. `plan-orchestrate` now stages the implementation with `git add -A` and then unstages the plans directory. The same exclusion applies to the changed-file list passed to `post-implementation` agents. Unstaging rather than excluding the path in `git add` means it works whether the plans directory is untracked, gitignored, or already committed by an earlier version. The success output now reminds you to delete the plan folder once the branch is merged. The README no longer tells you to keep the plans directory git-tracked; it recommends gitignoring it instead. Plans committed by earlier versions are left alone.
 
@@ -128,7 +130,8 @@ Initial public release.
 - **GitHub issue linking** — `plan-create` captures issue references (`Closes #N`, `Relates to #N`) and `plan-orchestrate` includes them in PR bodies for auto-close on merge.
 - MIT license.
 
-[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.3.0...HEAD
+[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.3.1...HEAD
+[2.3.1]: https://github.com/markshust/hcf/compare/hcf--v2.3.0...hcf--v2.3.1
 [2.3.0]: https://github.com/markshust/hcf/compare/hcf--v2.2.0...hcf--v2.3.0
 [2.2.0]: https://github.com/markshust/hcf/compare/hcf--v2.1.1...hcf--v2.2.0
 [2.1.1]: https://github.com/markshust/hcf/compare/hcf--v2.1.0...hcf--v2.1.1
