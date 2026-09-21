@@ -10,7 +10,7 @@
       "name": "hcf",
       "source": "./",
       "description": "Autonomous development orchestration with parallel TDD execution",
-      "version": "2.3.0",
+      "version": "2.3.1",
       "homepage": "https://github.com/markshust/hcf",
       "license": "MIT",
       "keywords": ["tdd", "autonomous", "orchestration", "planning", "agents"]
