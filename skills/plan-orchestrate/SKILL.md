@@ -274,10 +274,11 @@ is strictly:
 Resolve and run enrolled agents via the [Hook Discovery](#hook-discovery)
 routine with `HOOK = post-implementation`. To give batch agents a file list,
 first compute the changed files (this stages everything only to read the list,
-then unstages — nothing is committed):
+then unstages — nothing is committed). The plans directory is left out: plan
+files are working state, not code for agents to review.
 
 ```bash
-git add -A && git diff --name-only --cached && git reset HEAD
+git add -A && git reset -q -- "$PLANS_DIR" && git diff --name-only --cached && git reset HEAD
 ```
 
 Then spawn the resolved agents per their `mode` (see
@@ -310,17 +311,22 @@ exit stops the run before the commit** — see [Hook Discovery](#hook-discovery)
 > both post-implementation and pre-commit hook output.
 
 **5. Commit:**
-First, update `_plan.md` status to `completed`. Then stage and commit everything together in a **single commit**:
+First, update `_plan.md` status to `completed`. Then stage and commit the implementation in a **single commit**, leaving the plans directory out:
 ```bash
-# 1. Update plan status BEFORE committing
+# 1. Update plan status (local working state — it is not committed)
 # (edit $PLANS_DIR/{plan-name}/_plan.md — set Status to "completed")
 
-# 2. Stage everything: implementation + hook agent fixes + plan files (including updated status)
-git add -A "$PLANS_DIR/{plan-name}/"
+# 2. Stage implementation + hook agent fixes, then unstage the plans directory
 git add -A
+git reset -q -- "$PLANS_DIR"
 git commit -m "feat({plan-name}): {plan title summary}"
 ```
-> **IMPORTANT:** There must be exactly ONE commit here — do NOT make a separate commit for the plan status update. Update the status first, then stage and commit all changes together.
+> **IMPORTANT:** There must be exactly ONE commit here. **Never commit plan
+> files.** Plans are ephemeral: once the work is committed, the code and its
+> tests are the source of truth, and a plan kept in the repo goes stale
+> alongside them. Unstaging `$PLANS_DIR` (rather than excluding it with a
+> pathspec) works whether the directory is untracked, gitignored, or was
+> committed by an older HCF version.
 
 **6. After the commit succeeds — run the `post-commit` hook:**
 
@@ -532,6 +538,11 @@ Would you like to push this branch and create a pull request?
 **Never push or create a PR without the user's explicit permission.** Wait for their response before taking action. If they choose option 1, push and use `gh pr create` with a summary derived from the plan objective and "What Changed" section.
 
 **Linking GitHub Issues:** Check `_plan.md` for the `## Related Issues` field. If it contains issue references (e.g., `Closes #18`), include them in the PR body so GitHub automatically links and closes the issues when the PR is merged. Place them at the end of the PR body, each on its own line.
+
+**Plan cleanup:** End the success output by noting that the plan folder was not
+committed and can be deleted once the branch is merged:
+`Plan files in {plans dir}/{plan-name}/ were not committed — delete them once this work is merged.`
+Never delete the folder yourself; the PR step above still reads `_plan.md`.
 
 **Blocked:**
 ```
