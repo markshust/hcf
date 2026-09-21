@@ -386,8 +386,20 @@ the wrong directory filling up.
 
 **Changing it after plans exist means moving the folders yourself.** HCF does
 not migrate them; `/hcf:project-update` warns when `.claude/plans` still holds
-plan folders after a move. Keep the plans directory git-tracked, since plan
-files are committed alongside the work they describe.
+plan folders after a move.
+
+**Plans are ephemeral.** A plan is the working state of a single run, not
+documentation. `/hcf:plan-orchestrate` never commits plan files: it stages the
+implementation and leaves the plans directory out. Once the work is committed,
+the code and its tests are the source of truth. A plan kept around goes stale as
+soon as the feature changes, and an agent that later reads it will be misled.
+Keep the folder while the run is in progress, since that's what lets an
+interrupted run resume, and delete it once the branch is merged. To keep plans
+out of git entirely, add the directory to `.gitignore`:
+
+```gitignore
+.claude/plans/
+```
 
 To see what a project resolves to:
 
