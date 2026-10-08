@@ -132,7 +132,7 @@ subsequent hook with bogus drift and bricks the run.
 ### Step 2a: Pre-Implementation Hook
 
 Run the `pre-implementation` hook **once**, after the status is set to
-`in_progress` and **before** the first batch is spawned.
+`in_progress` and **before** the first batch is launched.
 
 Resolve and run enrolled agents via the **HOOKS.md discovery routine** (see
 [Hook Discovery](#hook-discovery) below) with `HOOK = pre-implementation`. Pass
@@ -145,14 +145,21 @@ do no work, and proceed to Step 3. **Any non-zero exit stops the run** — see
 
 ### Step 3: Find Ready Tasks
 
+Execution is a **rolling** loop, not a lockstep one. Each task starts as soon as
+its own dependencies are complete; it never waits for unrelated tasks that
+happened to start alongside its dependencies. Track a **running set** — the
+tasks with a worker in flight in this session.
+
 A task is **ready** when:
-- Status is `pending`
+- Status is `pending` (an `in_progress` task from an interrupted run counts as
+  pending — see [Task Already In Progress](#task-already-in-progress))
 - ALL dependencies have status `completed`
+- It is **not** in the running set
 
 ```
 ready_tasks = []
-for each task in tasks:
-    if task.status == "pending":
+for each task in tasks (in task-number order):
+    if task.status == "pending" and task not in running:
         if all(dep.status == "completed" for dep in task.dependencies):
             ready_tasks.append(task)
 ```
@@ -166,11 +173,18 @@ if all(task.status == "completed" for task in tasks):
     STOP
 ```
 
+**Waiting:**
+```
+if len(ready_tasks) == 0 and len(running) > 0:
+    # Nothing new can start yet, but workers are in flight
+    Go to Step 6 and wait for the next completion
+```
+
 **Blocked State:**
 ```
-if len(ready_tasks) == 0:
+if len(ready_tasks) == 0 and len(running) == 0:
     if any(task.status == "pending" for task in tasks):
-        # Tasks exist but none are ready - dependency deadlock or all blocked
+        # Tasks exist but none are ready and nothing is running - dependency deadlock or all blocked
         blocked_tasks = [t for t in tasks if t.status == "blocked"]
         Output: TASKS_BLOCKED: {list blocked task numbers and reasons}
         STOP
@@ -210,8 +224,8 @@ Then, by result:
   `mode`. Surface stderr verbatim; it names the file and the fix.
 - **Exit 4 → halt HCF.** Hook enrollment changed since this run started, so the
   remaining hooks would execute a different pipeline than the plan was reviewed
-  against. Surface stderr verbatim. Do **not** continue the batch loop and do
-  **not** commit.
+  against. Surface stderr verbatim. Stop launching (see
+  [Stopping mid-run](#stopping-mid-run)) and do **not** commit.
 - **Script missing or not executable → hard failure.** Say so and stop. There is
   no prose fallback; reconstructing the routine by hand is the failure this
   design exists to end.
@@ -366,22 +380,59 @@ Re-run the test suite on just the implementation.
 - If implementation tests also fail: a TDD worker produced broken code. Restore
   the stash (`git stash pop`) and output `TASKS_BLOCKED` with details.
 
-### Step 5: Spawn Parallel Workers
+### Step 5: Launch a Batch
 
-**Pre-batch hook (this loop iteration).** Before spawning workers, run the
-`pre-batch` hook via the [Hook Discovery](#hook-discovery) routine with
-`HOOK = pre-batch`. Because this runs on **every** loop iteration, honoring the
-**empty-hook fast no-op** is important: on **exit 0 with empty stdout**, return
-immediately — log nothing, do no work — so unconfigured loops add zero overhead.
-**Any non-zero exit stops the run**; per-iteration checking is also what makes
-drift (exit 4) surface promptly rather than at the end. See
-[Hook Discovery](#hook-discovery).
+A **batch** is the set of ready tasks launched together in one pass through this
+step. Batches still exist and still get the `pre-batch` and `post-batch` hooks;
+what changed is when they start. A batch launches the moment tasks become ready
+and capacity allows, so several batches can be in flight at once. Number
+batches sequentially from 1 for the run.
 
-For EACH ready task, spawn a Task tool subagent **in parallel** (single message with multiple Task tool calls):
+**Every ready task launches.** HCF sets no concurrency limit of its own: the
+limit is Claude Code's, 20 running subagents per session by default, raised with
+the `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` environment variable. Over that limit
+a spawn fails rather than queues, which
+[At the subagent limit](#at-the-subagent-limit) below handles.
 
 ```
-Use the Task tool with subagent_type="tdd-worker" for EACH ready task.
-All Task tool calls MUST be made in a SINGLE message to enable parallel execution.
+if at_limit:
+    # A spawn hit Claude Code's limit and no worker has finished since
+    Go to Step 6 and wait for the next completion
+batch = ready_tasks
+```
+
+**Pre-batch hook.** Before launching, run the `pre-batch` hook via the
+[Hook Discovery](#hook-discovery) routine with `HOOK = pre-batch`. Because this
+runs before **every** batch, honoring the **empty-hook fast no-op** is
+important: on **exit 0 with empty stdout**, return immediately — log nothing, do
+no work — so unconfigured runs add zero overhead. **Any non-zero exit stops
+launching** (see [Stopping mid-run](#stopping-mid-run)); checking per batch is
+also what makes drift (exit 4) surface promptly rather than at the end.
+
+**Mark the batch.** Set each task's status to `in_progress` in its task file and
+in the task table in `_plan.md`, and add it to the running set.
+
+**Launch.** Spawn one `tdd-worker` per task as a **background** subagent, all in
+a single message, and do **not** wait for them here:
+
+```
+Use the Task tool with subagent_type="tdd-worker" and run_in_background=true for EACH task in the batch.
+All Task tool calls for the batch go in a SINGLE message.
+```
+
+**At the subagent limit.** A spawn that fails with `Concurrent subagent limit
+reached` never started, so it is not a failure of the task: set that task back
+to `pending`, remove it from the running set, and do **not** increment its retry
+count. Set `at_limit`, and do not retry the spawn — the next completion in
+Step 6 clears `at_limit` and frees a slot. If the running set is empty when this
+happens, no completion is coming to free a slot (the limit is taken by
+subagents outside this run): surface the error and stop (see
+[Stopping mid-run](#stopping-mid-run)).
+
+Output one line, then continue to Step 6:
+
+```
+Batch {B} launched: tasks {list} (running {len(running)})
 ```
 
 **Worker Prompt (pass to each tdd-worker):**
@@ -407,9 +458,12 @@ The tdd-worker agent already has all TDD methodology and rules. The prompt needs
 
 Pass the **concrete** path under `## Task File Path`, not the literal `$PLANS_DIR` — the worker marks checkboxes and appends implementation notes there, and it must never read `.claude/hcf.json` or assume a default to find it. One resolver runs in this skill; every subagent is handed a finished path.
 
-### Step 6: Collect Results
+### Step 6: Collect One Result
 
-Wait for ALL parallel Task tool calls to complete. For each result:
+Wait for the **next** worker to finish — the harness notifies you as each
+background subagent completes. Do not poll, do not sleep, and do not wait for
+the rest of its batch. Process that one result, remove the task from the
+running set, and clear `at_limit`:
 
 **On TASK_COMPLETE:**
 1. Verify all requirements are checked in task file
@@ -425,44 +479,58 @@ Wait for ALL parallel Task tool calls to complete. For each result:
    - Set blocked reason from error message
    - Update task table in `_plan.md`
 3. If retry count < 3:
-   - Keep status as `pending` (will retry in next batch)
+   - Set status back to `pending` (it is ready again on the next pass through Step 3)
    - Log the failure for visibility
 
-**Post-batch hook (this loop iteration).** After all results for this batch are
-collected and statuses are updated, run the `post-batch` hook via the
-[Hook Discovery](#hook-discovery) routine with `HOOK = post-batch`. **Any
-non-zero exit stops the run.** Because this
-runs on **every** loop iteration, honoring the **empty-hook fast no-op** is
-important: if no agents are enrolled, return immediately — log nothing, do no
-work — so unconfigured loops add zero overhead.
+**Post-batch hook.** If this result was the **last** outstanding task of its
+batch, run the `post-batch` hook for that batch via the
+[Hook Discovery](#hook-discovery) routine with `HOOK = post-batch`. Other
+batches may still be running, so the working tree can hold their unfinished
+edits; a `post-batch` agent should look only at its own batch's tasks. **Any
+non-zero exit stops launching** (see [Stopping mid-run](#stopping-mid-run)).
+Honor the **empty-hook fast no-op**: if no agents are enrolled, return
+immediately — log nothing, do no work.
 
 ### Step 7: Report Progress
 
-After processing the batch, output:
+After each result, output one line:
 
 ```
-Batch complete:
+Task {N} {complete | failed (retry {r}/3) | blocked}. Progress: {completed}/{total}, running {len(running)}, ready {len(ready_tasks)}
+```
+
+When a batch's last task finishes, also output:
+
+```
+Batch {B} complete:
   Completed: {list of completed task numbers}
   Failed (will retry): {list of failed tasks with retry < 3}
   Blocked: {list of newly blocked tasks}
-
-Progress: {completed}/{total} tasks
-Ready for next batch: {count of newly ready tasks}
 ```
 
 ### Step 8: Continue Loop
 
-Return to Step 3 and find the next batch of ready tasks.
+Return to Step 3 after **every** result, so tasks unblocked by that completion
+launch immediately in a new batch while the others keep running.
 
 Continue until:
 - `ALL_TASKS_COMPLETE` - All tasks finished successfully
 - `TASKS_BLOCKED: [list]` - No progress possible
 
+### Stopping mid-run
+
+When a hook or the subagent limit stops the run while workers are still in
+flight, launch nothing further, but keep collecting results (Step 6, without
+hooks) until the running set is empty, so every task file ends in an accurate
+state. Then surface the error and stop. Do **not** run Step 4a and do **not**
+commit.
+
 ## Handling Edge Cases
 
 ### Task Already In Progress
-If a task has status `in_progress` (from interrupted previous run):
-- Treat it as `pending` and include in ready check
+If a task has status `in_progress` at startup (from an interrupted previous run):
+- Treat it as `pending` and include in ready check — no worker from this session is running it
+- Tasks this session marked `in_progress` in Step 5 are in the running set and are never relaunched
 - The worker will pick up where it left off based on [x] marks
 
 ### Partial Completion
@@ -557,18 +625,18 @@ Blocked tasks:
 Manual intervention required for blocked tasks.
 ```
 
-**Partial Progress (for visibility during execution):**
-```
-Batch {X} complete.
-Progress: {completed}/{total}
-Continuing...
-```
+**Partial Progress (for visibility during execution):** the per-result and
+per-batch lines from [Step 7](#step-7-report-progress).
 
 ## Performance Expectations
 
-With proper parallelization:
-- 10 independent tasks: ~1-2 batches
-- 50 tasks with shallow dependencies: ~3-5 batches
-- 100 tasks: ~5-10 batches
+Total time tracks the plan's **longest dependency chain**, not the sum of each
+batch's slowest task. A task never waits for unrelated work: if 002 takes 3
+minutes and 003 takes 15, a task depending only on 002 starts at minute 3.
 
-Each batch runs tasks in parallel, dramatically reducing total time compared to sequential execution.
+- 10 independent tasks: all start at once (up to the limit), bounded by the slowest
+- Deep plans with uneven task sizes gain the most over lockstep batches
+- Concurrency is Claude Code's subagent limit (20 by default; raise it with
+  `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`), so very wide plans queue rather than
+  all starting at once
+

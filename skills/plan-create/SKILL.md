@@ -330,7 +330,7 @@ Present the refined plan along with a summary of whatever `post-plan` agents act
 > Here's the plan I've created for **{feature name}**:
 >
 > **Tasks:** {N} total
-> **Parallel batches:** ~{estimate based on dependencies}
+> **Longest dependency chain:** {number of tasks on the longest path through the dependency graph}
 >
 > | # | Task | Dependencies |
 > |---|------|--------------|
@@ -379,7 +379,7 @@ Plan created: {plan-name}
 
 Location: $PLANS_DIR/{plan-name}/
 Total tasks: {N}
-Independent tasks (batch 1): {count of tasks with no dependencies}
+Independent tasks (start immediately): {count of tasks with no dependencies}
 ```
 
 4. Ask the user if they want to start execution now:
@@ -394,7 +394,7 @@ Independent tasks (batch 1): {count of tasks with no dependencies}
 
 5. If user chooses to start now:
    - Invoke the `plan-orchestrate` skill with the plan name to begin parallel execution
-   - Loops through all batches until complete
+   - Runs until every task is complete or blocked, starting each task as soon as its dependencies finish
 
 6. If user chooses later:
    - Confirm they can start anytime by saying "run the {plan-name} plan" or "execute the plan"

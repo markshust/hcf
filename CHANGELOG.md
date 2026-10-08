@@ -4,6 +4,14 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+### Changed
+- **Tasks start as soon as their own dependencies finish.** `plan-orchestrate` used to run lockstep batches: every task in a batch had to finish before any task in the next one started, so a task whose dependency took 3 minutes sat idle while an unrelated task in the same batch took 15. Workers now launch in the background and each completion immediately launches whatever it unblocked, so total time follows the plan's longest dependency chain instead of the sum of each batch's slowest task. Failed tasks under the retry limit are eligible again right away.
+
+  Batches still exist: a batch is the set of tasks launched together, and `pre-batch` / `post-batch` still fire once per batch. What changed is that batches overlap, so a `post-batch` agent may see other batches' unfinished edits in the working tree. See [HOOKS.md → Batches overlap](HOOKS.md#batches-overlap).
+
+### Fixed
+- **Plans wider than Claude Code's subagent limit no longer lose tasks.** Claude Code runs at most 20 subagents per session by default and fails, rather than queues, any spawn over that. `plan-orchestrate` launched every ready task with no handling for that error, so a step with more than 20 ready tasks left the extras unstarted. A spawn refused at the limit now goes back to `pending` without using a retry and launches when the next worker finishes. HCF still sets no limit of its own; to run more workers at once, raise `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`.
+
 ## [2.3.1] — 2026-09-21
 
 ### Changed

@@ -129,8 +129,8 @@ There are exactly **8** hook points where enrolled agents can run:
 | `pre-plan` | Before planning Discovery begins |
 | `post-plan` | After the plan is built and validated, before user review |
 | `pre-implementation` | Before the first implementation batch |
-| `pre-batch` | Before each batch of TDD workers is spawned |
-| `post-batch` | After each batch of TDD workers completes |
+| `pre-batch` | Before each batch of TDD workers launches |
+| `post-batch` | When the last task of a batch finishes |
 | `post-implementation` | After all tasks complete |
 | `pre-commit` | After the full test suite passes, before the commit |
 | `post-commit` | After the commit, before the push/PR prompt |
@@ -228,21 +228,31 @@ After generating a plan, HCF visualizes the task dependency graph so you can ver
 ```
 
 This tells the orchestrator which tasks can run in parallel and which must wait. In this example:
-- **Batch 1:** Task 001 (no dependencies)
-- **Batch 2:** Tasks 002, 003, 004 (all depend only on 001)
-- **Batch 3:** Tasks 005, 006 (005 depends on 002+003; 006 depends on 004)
+- Task 001 starts first (no dependencies)
+- Tasks 002, 003, 004 start together when 001 finishes
+- Task 006 starts as soon as 004 finishes, even if 002 and 003 are still running
+- Task 005 starts when both 002 and 003 have finished
 
 ### Parallel Execution
 
-Independent tasks within each batch run simultaneously:
+Tasks start the moment their own dependencies finish. Nothing waits for an
+unrelated task that happened to start at the same time:
 
 ```
-Batch 1: Task 001 (no deps)          → 1 worker
-Batch 2: Tasks 002, 003, 004         → 3 parallel workers
-Batch 3: Tasks 005, 006              → 2 parallel workers
+t=0    001 starts                          → 1 worker
+       001 done → 002, 003, 004 start      → 3 workers
+       004 done → 006 starts               → 002, 003 still running
+       002 + 003 done → 005 starts
 ```
 
-100 tasks might complete in 5-10 batches instead of 100 sequential runs.
+Total time follows the plan's longest dependency chain rather than the slowest
+task of each step. HCF sets no limit on how many workers run at once; Claude
+Code does, at 20 subagents per session by default. To run more, raise it in your
+shell or in the `env` block of your Claude Code settings:
+
+```bash
+export CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS=40
+```
 
 ### TDD Methodology
 

@@ -20,16 +20,25 @@ plan/implementation flow at which enrolled agents run.
 | `pre-plan`            | Before `plan-create` Phase 1 (Discovery) begins                        |
 | `post-plan`           | `plan-create` Phase 6, after dependency validation                     |
 | `pre-implementation`  | `plan-orchestrate` after Step 2, before the first batch                |
-| `pre-batch`           | Each loop iteration, before Step 5 (spawn workers)                     |
-| `post-batch`          | Each loop iteration, after Step 6 (collect results)                    |
+| `pre-batch`           | Before each batch of workers launches (Step 5)                         |
+| `post-batch`          | When the last task of a batch finishes (Step 6)                        |
 | `post-implementation` | `plan-orchestrate` Step 4a, when all tasks are complete                |
 | `pre-commit`          | Step 4a, after the full test suite passes, before the commit          |
 | `post-commit`         | Step 4a, after the commit, before the push/PR prompt                   |
 
+### Batches overlap
+
+`plan-orchestrate` schedules on a rolling basis: a task launches as soon as its
+own dependencies complete, without waiting for unrelated tasks. A **batch** is
+the set of tasks launched together in one pass, and several batches can be in
+flight at once. `pre-batch` and `post-batch` still fire exactly once per batch,
+but a `post-batch` agent may find other batches' unfinished edits in the working
+tree, so it should look only at its own batch's tasks.
+
 ### Why there is no `execution` hook
 
 There is deliberately **no** `execution` hook. In HCF, executing a plan **is**
-the implementation loop — the Step 3 → 5 → 6 → 8 batch cycle in
+the implementation loop — the Step 3 → 5 → 6 → 8 cycle in
 `plan-orchestrate`. An `execution` hook would fire over that same span already
 covered by the `*-implementation` and `*-batch` hooks (`pre-implementation`,
 `pre-batch`, `post-batch`, `post-implementation`), so it would only duplicate
