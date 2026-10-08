@@ -4,6 +4,8 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-10-08
+
 ### Changed
 - **Tasks start as soon as their own dependencies finish.** `plan-orchestrate` used to run lockstep batches: every task in a batch had to finish before any task in the next one started, so a task whose dependency took 3 minutes sat idle while an unrelated task in the same batch took 15. Workers now launch in the background and each completion immediately launches whatever it unblocked, so total time follows the plan's longest dependency chain instead of the sum of each batch's slowest task. Failed tasks under the retry limit are eligible again right away.
 
@@ -138,7 +140,8 @@ Initial public release.
 - **GitHub issue linking** — `plan-create` captures issue references (`Closes #N`, `Relates to #N`) and `plan-orchestrate` includes them in PR bodies for auto-close on merge.
 - MIT license.
 
-[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.3.1...HEAD
+[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.4.0...HEAD
+[2.4.0]: https://github.com/markshust/hcf/compare/hcf--v2.3.1...hcf--v2.4.0
 [2.3.1]: https://github.com/markshust/hcf/compare/hcf--v2.3.0...hcf--v2.3.1
 [2.3.0]: https://github.com/markshust/hcf/compare/hcf--v2.2.0...hcf--v2.3.0
 [2.2.0]: https://github.com/markshust/hcf/compare/hcf--v2.1.1...hcf--v2.2.0
