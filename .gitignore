@@ -1,7 +1,7 @@
 # Local Claude Code state: plan scaffolding (.claude/plans/), machine-specific
 # settings, and any fingerprint files HCF writes alongside a plan. Plans are
-# working scaffolding, not deliverables — this repo is the plugin itself and
-# does not run HCF on itself.
+# working scaffolding, not deliverables. HCF's own project config for running
+# HCF on this repo (testing, standards, architecture, hcf.json) is tracked.
 #
 # NOTE: this MUST stay as `.claude/*` (contents) rather than `.claude/` (the
 # directory). Git cannot re-include a file underneath an excluded *directory*,
@@ -10,6 +10,10 @@
 # guess. Use `git add -f` to track anything else under here.
 .claude/*
 !.claude/CLAUDE.md
+!.claude/testing.md
+!.claude/code-standards.md
+!.claude/architecture.md
+!.claude/hcf.json
 
 # Test harness scratch space. run-tests.sh clears this on entry and exit, but a
 # suite that dies mid-run leaves it behind.

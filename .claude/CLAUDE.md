@@ -8,15 +8,27 @@ This file is HCF's own project config. It is **not** the template shipped to
 users — that lives inline in `skills/project-setup/SKILL.md`, and editing this
 file has no effect on what `/hcf:project-setup` generates.
 
-## Do not use HCF to build HCF
+## Feature Development
 
-Do **not** invoke `hcf:plan-create` or `hcf:plan-orchestrate` for work in this
-repo. HCF cannot bootstrap itself: `plan-orchestrate` requires
-`.claude/testing.md` and `.claude/code-standards.md`, which this repo
-deliberately does not have, and its hook agents would resolve against the very
-`agents/` directory being edited. Work here directly, TDD where practical.
+For any feature or change beyond a simple fix, use the `hcf:plan-create` skill
+to trigger the autonomous development workflow. Never use Claude Code's
+built-in plan mode. After writing a plan, ask the user if they want to execute
+it, and provide the command to run it later with the `hcf:plan-orchestrate`
+skill.
 
-The plugin's own workflow is for *consumer* projects.
+Use this workflow for: new features, multi-file changes, anything requiring
+multiple steps or tests.
+
+Skip for: quick bug fixes, single-line changes, questions, documentation. When
+skipped, still write the test first for any added behaviour.
+
+**HCF builds HCF only from a frozen copy.** Start the session with
+`--plugin-dir` pointing at a snapshot of HCF (a copy of a commit, outside this
+checkout), never at this checkout: the hooks and agents that check the
+workers must not be the files the workers are editing. Project config for this
+repo is in `.claude/testing.md`, `.claude/code-standards.md`,
+`.claude/architecture.md` and `.claude/hcf.json` (which registers
+`tests/run-tests.sh` as the test runner for the TDD verifier).
 
 ## Commands
 
@@ -26,6 +38,9 @@ The plugin's own workflow is for *consumer* projects.
 
 # Run one suite
 ./tests/run-tests.sh test-parse
+
+# Run one test (assertions whose description contains the text)
+./tests/run-tests.sh test-parse --filter "it parses the phase"
 
 # Lint shell
 shellcheck hooks/*.sh tests/*.sh

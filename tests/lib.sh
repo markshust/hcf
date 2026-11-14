@@ -69,12 +69,24 @@ new_tmpdir() {
   mktemp -d "$REPO_ROOT/tests/.tmp/t.XXXXXX"
 }
 
+# run-tests.sh --filter: an assertion whose description does not contain the
+# filter (in any case) is neither run nor counted.
+_filtered_out() {
+  [ -n "${HCF_TEST_FILTER:-}" ] || return 1
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    *"$(printf '%s' "$HCF_TEST_FILTER" | tr '[:upper:]' '[:lower:]')"*) return 1 ;;
+  esac
+  return 0
+}
+
 _pass() {
+  _filtered_out "$1" && return 0
   TESTS_RUN=$((TESTS_RUN + 1))
   printf '  \033[32m✓\033[0m %s\n' "$1"
 }
 
 _fail() {
+  _filtered_out "$1" && return 0
   TESTS_RUN=$((TESTS_RUN + 1))
   TESTS_FAILED=$((TESTS_FAILED + 1))
   printf '  \033[31m✗\033[0m %s\n' "$1"

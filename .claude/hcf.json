@@ -1,0 +1,3 @@
+{
+  "testRunners": ["./tests/run-tests.sh", "tests/run-tests.sh", "bash tests/run-tests.sh", "bash ./tests/run-tests.sh"]
+}
