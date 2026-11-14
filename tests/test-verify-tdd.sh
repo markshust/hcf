@@ -130,6 +130,10 @@ T="$VPROJ/guard-unrun.jsonl"
 { add_test "adds two numbers"; red "adds two numbers"; edit_src; green; add_test "subtracts two numbers"; green; } > "$T"
 assert_exit "it fails a guard requirement never run on its own" 1 "$(verify "$T")"
 assert_contains "it names the unrun guard" "$(cat "$VPROJ/out")" "guard \`it subtracts two numbers\` was never run"
+# A guard's test may already exist (an earlier task wrote it): a filtered run naming it is enough.
+T="$VPROJ/guard-existing.jsonl"
+{ add_test "adds two numbers"; red "adds two numbers"; edit_src; green; pass_run "subtracts two"; green; } > "$T"
+assert_exit "it accepts a guard whose test an earlier task wrote once a filtered run names it" 0 "$(verify "$T")"
 mv "$TASK.bak" "$TASK"
 
 # A first-run pass that no production code delivers (nothing to cut back) is
@@ -331,6 +335,16 @@ assert_empty "it still allows editing the task file" "$out"
 { cat "$VPROJ/agent-unread.jsonl"; read_file "$VPROJ/CLAUDE.md"; } > "$VPROJ/agent-read.jsonl"
 out="$(guard_edit "$VPROJ/agent-read.jsonl" "$VPROJ/tests/CalcTest.php")"
 assert_empty "it allows a test edit once every required file is read" "$out"
+# The transcript often has no snapshot of a file (originalFile is null), so the
+# guard keeps its own copy from before the worker's first change, for revert-task.sh.
+mkdir -p "$VPROJ/tests"; printf "<?php\nit('was here before', fn () => true);\n" > "$VPROJ/tests/Saved.php"
+out="$(guard_edit "$VPROJ/agent-read.jsonl" "$VPROJ/tests/Saved.php")"
+PRE="$(dirname "$TASK")/.tdd/$(basename "$TASK").x10.pre"
+assert_eq "it saves a file's content before the worker's first change to it" "$(cat "$VPROJ/tests/Saved.php")" "$(cat "$PRE/$(printf '%s' "$VPROJ/tests/Saved.php" | shasum -a 256 | cut -c1-64)" 2>/dev/null)"
+printf 'changed\n' > "$VPROJ/tests/Saved.php"
+out="$(guard_edit "$VPROJ/agent-read.jsonl" "$VPROJ/tests/Saved.php")"
+assert_contains "it keeps the copy from the first change, not a later one" "$(cat "$PRE/$(printf '%s' "$VPROJ/tests/Saved.php" | shasum -a 256 | cut -c1-64)" 2>/dev/null)" "was here before"
+rm -f "$VPROJ/tests/Saved.php"
 
 # Cut-back: an earlier GREEN step over-built, so the next test passed on its
 # first run. Deleting that code (an edit that adds no token) until the test
@@ -846,6 +860,19 @@ printf 'someone else changed this\n' > "$RPROJ/src/Big.php"
 "$RV" "$RPROJ/plan/001.md" "$RT2" > /dev/null 2>&1; code=$?
 assert_exit "it fails loudly when an edit cannot be undone exactly" 1 "$code"
 assert_eq "it leaves such a file untouched" "someone else changed this" "$(cat "$RPROJ/src/Big.php")"
+# A deletion (new text empty) cannot be found to undo; the guard's saved copy restores it.
+printf 'keep\nCUT\nend\n' > "$RPROJ/src/Cut.php"
+mkdir -p "$RPROJ/plan/.tdd/001.md.w1.pre"
+cp "$RPROJ/src/Cut.php" "$RPROJ/plan/.tdd/001.md.w1.pre/$(printf '%s' "$RPROJ/src/Cut.php" | shasum -a 256 | cut -c1-64)"
+edit_res "$RPROJ/src/Cut.php" "CUT
+" "" > "$RPROJ/agent-w1.jsonl"
+printf 'keep\nend\n' > "$RPROJ/src/Cut.php"
+"$RV" "$RPROJ/plan/001.md" "$RPROJ/agent-w1.jsonl" > /dev/null 2>&1; code=$?
+assert_exit "it reverts a deletion with no transcript snapshot from the guard's saved copy" 0 "$code"
+assert_eq "it restores the file from that copy" "$(printf 'keep\nCUT\nend')" "$(cat "$RPROJ/src/Cut.php")"
+printf 'keep\nend\nother worker\n' > "$RPROJ/src/Cut.php"
+"$RV" "$RPROJ/plan/001.md" "$RPROJ/agent-w1.jsonl" > /dev/null 2>&1
+assert_eq "it never restores the saved copy over another writer's later change" "$(printf 'keep\nend\nother worker')" "$(cat "$RPROJ/src/Cut.php")"
 # --dry-run is accepted in any position (an orchestrator writes it first).
 printf 'top\nAAA-2\nmiddle\nBBB-x\nend\n' > "$RPROJ/src/Big.php"
 "$RV" --dry-run "$RPROJ/plan/001.md" "$RT2" > "$RPROJ/out" 2>&1; code=$?

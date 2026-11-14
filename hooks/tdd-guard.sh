@@ -153,6 +153,14 @@ case "$verdict" in
           # Which transcript holds this task's changes, for revert-task.sh when
           # the worker never reaches its stop hook (an interrupted run).
           printf '%s\n' "$HCF_TDD_TRANSCRIPT" > "$(dirname "$sidecar")/$(basename "$HCF_TDD_TASK_FILE").transcript" 2>/dev/null
+          # The file as it was before this worker's first change to it: the
+          # transcript often records no snapshot (originalFile null), and an
+          # edit that only deletes text cannot be undone by searching for it.
+          if [ -n "$path" ] && [ -f "$path" ]; then
+            pre="${sidecar%.calls}.pre"
+            key="$(printf '%s' "$path" | shasum -a 256 | cut -c1-64)"
+            [ -e "$pre/$key" ] || { mkdir -p "$pre" && cp -p "$path" "$pre/$key"; } 2>/dev/null
+          fi
           # hcf_added: the tests this call adds, as counted above against the
           # file on disk; --gate uses it for a Write whose result is not in
           # the transcript yet.

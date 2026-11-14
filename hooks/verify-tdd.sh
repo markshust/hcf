@@ -1086,8 +1086,10 @@ $1 == "RES" {
     f = RUN_FILTER
     r = match_req(f)
     # A run only speaks for a requirement whose test this worker has written;
-    # before that, the filter can only match some other, older test.
-    if (r > 0 && !written[r]) r = 0
+    # before that, the filter can only match some other, older test. A guard is
+    # the exception: its test may already exist (an earlier task wrote it), and
+    # a filtered run naming it is all a guard needs.
+    if (r > 0 && !written[r] && !(req[r] in is_guard)) r = 0
     # Any run filtered to a requirement means the tests written so far were run;
     # more than one new test before it is batch-writing, pass or fail.
     if (r > 0) {

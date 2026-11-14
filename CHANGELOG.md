@@ -27,6 +27,9 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 - Plugin agents are namespaced: when the discovery script prints a bare name and no such subagent type exists, `plan-orchestrate` spawns `hcf:<name>`.
 
 ### Fixed
+- **A `(guard)` whose test an earlier task wrote could never pass.** The verifier only counted a filtered run for a requirement whose test this worker wrote, so a guard test that already existed was always reported "never run on its own", however it was run. A filtered run naming a guard now counts whoever wrote its test.
+- **`revert-task.sh` could not undo deletions.** Claude Code's edit results often carry no `originalFile` snapshot, so revert fell back to finding each edit's new text, and an edit that only deletes text has none to find: the file was left untouched. The edit guard now keeps a copy of each file from before the worker's first change (`.tdd/<task file>.<agent id>.pre/`), and revert restores it when replaying the worker's edits onto it gives the file as it is now (never over another writer's later change). `plan-orchestrate` deletes these copies with the task's other records, after the revert.
+- `tdd-worker` is told plainly that every `(guard)` needs its own filtered run: a whole-file or whole-suite run does not count.
 - `plan-orchestrate` relied on `@.claude/testing.md` / `@.claude/code-standards.md` includes, which are not expanded when a skill loads, so the text never arrived. The orchestrator now reads both files itself, and workers and hook agents are told to read them in full by path instead of receiving tens of kilobytes pasted into every prompt.
 
 ## [2.4.0] — 2026-10-08

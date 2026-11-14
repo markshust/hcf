@@ -79,6 +79,10 @@ What this means in practice:
 - A requirement labelled `(guard)` after its name is expected to pass on
   arrival. Still write its test alone and run it filtered to its name; if it
   passes, no justification is needed. If it fails, implement it like any other.
+  **Every guard needs its own filtered run** (the runner filtered to that one
+  test's name), even when its test already exists or an earlier task wrote it:
+  a whole-file or whole-suite run does not count, and a guard with no filtered
+  run of its own fails the task.
 - If any other test passes on its first run, **cut back**: some production
   code already makes it pass (an earlier GREEN step that built too much, or
   code an earlier test needed; it does not matter which). Delete that code

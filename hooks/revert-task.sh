@@ -60,10 +60,26 @@ command -v python3 >/dev/null 2>&1 || { printf 'revert-task: error: python3 is r
 # often a symlink from a worktree into the main checkout.
 task_dir="$(cd "$(dirname "$task_file")" && pwd)" || exit 3
 
-python3 - "$transcript" "$task_dir" "$dry_run" <<'PY'
+python3 - "$transcript" "$task_dir" "$dry_run" "$(basename "$task_file")" <<'PY'
 import json, os, re, shlex, sys
 
 transcript, task_dir, dry_run = sys.argv[1], sys.argv[2], sys.argv[3] == "--dry-run"
+task_name = sys.argv[4] if len(sys.argv) > 4 else ""
+# The edit guard keeps each file's content from before this worker's first
+# change to it in <task dir>/.tdd/<task file>.<agent id>.pre/<sha256 of path>.
+_agent = re.match(r"agent-(.+)\.jsonl$", os.path.basename(transcript))
+pre_dir = os.path.join(task_dir, ".tdd", "%s.%s.pre" % (task_name, _agent.group(1))) if (_agent and task_name) else None
+
+def saved_copy(path):
+    """The guard's copy of path from before the worker's first change, or None."""
+    if not pre_dir:
+        return None
+    import hashlib
+    try:
+        with open(os.path.join(pre_dir, hashlib.sha256(path.encode("utf-8")).hexdigest()), encoding="utf-8") as fh:
+            return fh.read()
+    except (OSError, UnicodeDecodeError):
+        return None
 task_dirs = {task_dir.rstrip("/"), os.path.realpath(task_dir).rstrip("/")}
 
 def under(path, dirs):
@@ -201,6 +217,29 @@ for path in order:
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(first["originalFile"])
         continue
+    # No snapshot in the transcript: the guard's saved copy stands in for it,
+    # when replaying this worker's edits onto it gives the file as it is now.
+    copy = saved_copy(path) if first.get("originalFile") is None else None
+    if copy is not None:
+        content, exact = copy, True
+        for res in recs:
+            pairs = edits_of(res)
+            if pairs is None:
+                exact = False
+                break
+            for old, new, replace_all in pairs:
+                if old is None or new is None or (old and old not in content):
+                    exact = False
+                    break
+                content = content.replace(old, new) if replace_all else content.replace(old, new, 1)
+            if not exact:
+                break
+        if exact and (content == now or formatted.get(path, formatted.get(os.path.realpath(path), 0)) > last_change[path]):
+            print("restore " + path)
+            if not dry_run:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(copy)
+            continue
     # No snapshot, or another writer changed the file after this worker: undo
     # this worker's edits, newest first, from the file as it is now.
     try:
