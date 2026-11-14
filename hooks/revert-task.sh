@@ -73,8 +73,16 @@ def in_task_dir(path):
     return under(path, task_dirs) or under(os.path.realpath(path), task_dirs)
 
 # Formatters the guard lets a worker run on files it names. Their rewrite of
-# those files is the worker's own change, not another writer's.
+# those files is the worker's own change, not another writer's. Keep this list
+# in step with formatter_kind() in verify-tdd.sh, which decides what the guard
+# allows.
 FORMATTERS = re.compile(r"(^|/)(pint|php-cs-fixer|phpcbf|prettier|eslint|rector|black|ruff|isort|autopep8|gofmt|goimports|rustfmt|rubocop|standardrb|clang-format|stylua|swiftformat|ktlint|biome)$")
+SUBCOMMAND_FORMATTERS = {("cargo", "fmt"), ("go", "fmt"), ("dotnet", "format")}
+
+def runs_formatter(words):
+    if any(FORMATTERS.search(w) for w in words):
+        return True
+    return any((os.path.basename(a), b) in SUBCOMMAND_FORMATTERS for a, b in zip(words, words[1:]))
 
 def formatted_paths(command, cwd):
     """Files named on a formatter command line, resolved against cwd."""
@@ -87,7 +95,7 @@ def formatted_paths(command, cwd):
         if words and words[0] == "cd" and len(words) > 1:
             cwd = os.path.join(cwd, words[1])
             continue
-        if not any(FORMATTERS.search(w) for w in words):
+        if not runs_formatter(words):
             continue
         for w in words:
             if not w.startswith("-") and re.search(r"\.[A-Za-z0-9]+$", w) and not FORMATTERS.search(w):
@@ -161,7 +169,7 @@ def current(path):
     try:
         with open(path, encoding="utf-8") as fh:
             return fh.read()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
 
 status = 0

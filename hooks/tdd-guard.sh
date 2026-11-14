@@ -98,7 +98,7 @@ added=0
 case "$tool" in
   Edit|MultiEdit|Write)
     added="$(printf '%s' "$input" | jq -c '.tool_input // {}' | "$DIR/verify-tdd.sh" --count-tests "$tool" 2>/dev/null)"
-    case "$added" in -[0-9]*|[0-9]*) ;; *) added=0 ;; esac ;;
+    case "$added" in ''|-|*[!0-9-]*|?*-*) added=0 ;; esac ;;
 esac
 
 # Whether an Edit/MultiEdit only deletes code: the cut-back answer to a test
@@ -124,39 +124,39 @@ verdict="$(HCF_GATE_ID="$tool_use_id" HCF_GATE_REMOVAL="$removal" HCF_GATE_ADDED
 case "$verdict" in
   DENY-FORMAT\ *)
     reason="HCF TDD guard: refused a formatter run without an explicit file list. Formatting is allowed, but only on files named literally on the command line (no directories, no \$(...) substitutions): a bare run rewrites files that belong to other tasks. List the files you changed, e.g. ./vendor/bin/php-cs-fixer fix path/One.php path/Two.php"
-    jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-    ;;
+    deny "$reason" ;;
   DENY-CHECKOUT\ *)
     target="${verdict#DENY-CHECKOUT }"
     reason="HCF TDD guard: refused a change to $target: it is in another checkout of this repository, but you are working in $HCF_TDD_CWD. Make every change inside your own working directory ($HCF_TDD_CWD), at the same path relative to it; never edit the main checkout or another worktree."
-    jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-    ;;
+    deny "$reason" ;;
   DENY-BATCH\ *)
     reason="HCF TDD guard: refused to add another test to ${verdict#DENY-BATCH }. You added a new test that has not been run yet. One test at a time: run the test you just wrote, filtered to its name, and see it fail before writing the next one."
-    jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-    ;;
+    deny "$reason" ;;
   DENY-PASSFIRST\ *)
     name="${verdict#DENY-PASSFIRST }"
     reason="HCF TDD guard: the test for \`$name\` passed on its first filtered run, and that needs an answer before you change production code or add another test. The answer is almost always to cut back: some production code already makes this test pass (an earlier GREEN step that built more than its test needed, or code an earlier test needed). Delete that code with removal-only Edits (each new_string keeps only tokens of its old_string, in the same order, and adds none: no new names, values, operators or rewording) until this test fails; run it filtered to its name and see it FAIL; then rebuild the code in GREEN. Until then only removal-only Edits to production files are allowed. If instead the test is wrong: edit it so it fails for the reason the requirement describes, and run it again. Only when NO production code delivers this behaviour (nothing to delete: a language or framework guarantee) add to the task file's Implementation Notes, exactly: PASSED-FIRST: $name — no-code: <what guarantees it>. The orchestrator checks that claim, and a PASSED-FIRST line without no-code: is not accepted. From here on build only what each test needs."
-    jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-    ;;
+    deny "$reason" ;;
   DENY-BASH\ *)
     target="${verdict#DENY-BASH }"
-    reason="HCF TDD guard: refused a Bash command that changes $target. In a tdd-worker, project files (tests, production code and your task file alike) may only be changed with the Edit, Write or MultiEdit tools, so each change can be checked against the TDD method. Use Bash only to run tests, linters and read-only commands; that includes git commands that change the working tree (checkout, restore, apply, stash), patch, touch, ln, generators such as artisan make:, and sh -c / bash -c / eval wrapping any of these. Make this change with Edit or Write instead (for a generator, write the file it would create yourself)."
-    jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-    ;;
+    reason="HCF TDD guard: refused a Bash command that changes $target. In a tdd-worker, project files (tests, production code and your task file alike) may only be changed with the Edit, Write or MultiEdit tools, so each change can be checked against the TDD method. Use Bash only to run tests, linters and read-only commands; that includes git commands that change the working tree or its history (checkout, restore, apply, stash, rm, mv, commit), patch, touch, ln, curl -o, rm of anything git does not ignore (caches and build output may be deleted), generators such as artisan make:, and sh -c / bash -c / eval wrapping any of these. Make this change with Edit or Write instead (for a generator, write the file it would create yourself). Do not delete or rename a project file yourself: if the task needs one gone, leave it in place and name it in the task file's Implementation Notes for the orchestrator."
+    deny "$reason" ;;
   DENY\ *)
     target="${verdict#DENY }"
     reason="HCF TDD guard: refused to change production file $target. No failing test is armed: either no test has failed yet, or you added a new test since the last failing run. Follow the method: write ONE test for the next requirement, run it alone with the filtered RED command and see it FAIL, then make the minimal production change. A run counts as failing only when the runner itself is the command (not inside a comment or an echo), it is filtered to the requirement's test name, and its output shows the failure (keep at least the runner's summary line if you trim it with tail or grep); an infrastructure error (Docker or the database not reachable, no tests found, a parse or syntax error, out of memory) is not a failing test: fix it and run again. If this is a refactor, run the suite green first and do not add a new test before refactoring."
-    jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-    ;;
+    deny "$reason" ;;
   ALLOW)
     # Record an allowed file change as a transcript-shaped tool_use line,
     # appended under a lock so parallel hook runs never interleave.
     case "$tool" in
       Edit|Write|MultiEdit|NotebookEdit)
         if mkdir -p "$(dirname "$sidecar")" 2>/dev/null; then
-          line="$(printf '%s' "$input" | jq -c --arg id "${tool_use_id:-hcf-$$-$(date +%s)}" '{type: "assistant", cwd: .cwd, message: {content: [{type: "tool_use", id: $id, name: .tool_name, input: (.tool_input // {})}]}}')"
+          # Which transcript holds this task's changes, for revert-task.sh when
+          # the worker never reaches its stop hook (an interrupted run).
+          printf '%s\n' "$HCF_TDD_TRANSCRIPT" > "$(dirname "$sidecar")/$(basename "$HCF_TDD_TASK_FILE").transcript" 2>/dev/null
+          # hcf_added: the tests this call adds, as counted above against the
+          # file on disk; --gate uses it for a Write whose result is not in
+          # the transcript yet.
+          line="$(printf '%s' "$input" | jq -c --arg id "${tool_use_id:-hcf-$$-$(date +%s)}" --argjson added "$added" '{type: "assistant", cwd: .cwd, hcf_added: $added, message: {content: [{type: "tool_use", id: $id, name: .tool_name, input: (.tool_input // {})}]}}')"
           n=0
           while ! mkdir "$sidecar.lock" 2>/dev/null && [ $n -lt 50 ]; do n=$((n + 1)); sleep 0.1; done
           printf '%s\n' "$line" >> "$sidecar"
@@ -167,7 +167,6 @@ case "$verdict" in
     # No verdict: the check itself failed. Refuse rather than let it through.
     why="$(head -n 3 "$errf" | tr '\n' ' ')"
     reason="HCF TDD guard: could not check this call, so it is refused rather than allowed unchecked (${why:-no verdict from verify-tdd.sh}). Retry it once. If it is refused again for the same reason, stop and end with exactly: TASK_FAILED: TDD guard error — <this message>."
-    jq -cn --arg r "$reason" '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: $r}}'
-    ;;
+    deny "$reason" ;;
 esac
 exit 0

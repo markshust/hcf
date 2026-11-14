@@ -170,14 +170,12 @@ out="$(HCF_GATE_TOOL=Bash HCF_GATE_CMD="cat >> tests/CalcTest.php <<HEREDOC" HCF
 assert_eq "it denies a Bash write into a test file" "DENY-BASH $VPROJ/tests/CalcTest.php" "$out"
 out="$(HCF_GATE_TOOL=Bash HCF_GATE_CMD="./vendor/bin/pest --filter=x 2>&1 | tail -3 > /tmp/out.txt" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$VPROJ/good.jsonl")"
 assert_eq "it allows a test run that writes only outside the project" "ALLOW" "$out"
-out="$(HCF_GATE_TOOL=Bash HCF_GATE_SCRIPTWRITES="src/Calc.php" HCF_GATE_CMD="python3 - <<HEREDOC" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$VPROJ/good.jsonl")"
+out="$(HCF_GATE_TOOL=Bash HCF_GATE_CMD="$(printf "python3 - <<'PY'\nopen('src/Calc.php', 'w').write('x')\nPY")" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$VPROJ/good.jsonl")"
 assert_eq "it denies an interpreter script that writes a project file" "DENY-BASH $VPROJ/src/Calc.php" "$out"
 out="$(HCF_GATE_TOOL=Bash HCF_GATE_CMD="sed -i '' 's/^- \\[ \\]/- [x]/' .claude/plans/demo/001-demo.md" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$VPROJ/good.jsonl")"
 assert_eq "it denies ticking the task file from Bash" "DENY-BASH $TASK" "$out"
 out="$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$TASK" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$VPROJ/disarmed.jsonl")"
 assert_eq "it allows editing the task file with Edit while disarmed" "ALLOW" "$out"
-out="$("$VT" --touched "$TASK" "$VPROJ/good.jsonl" | sort | tr '\n' ' ')"
-assert_eq "it lists the files a worker touched" "$VPROJ/src/Calc.php $VPROJ/tests/CalcTest.php " "$out"
 
 # Real-time checks: one new test at a time, and an answer for a first-run pass.
 gate() { HCF_GATE_TOOL="$1" HCF_GATE_PATH="$2" HCF_GATE_ADDED="$3" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$4"; }
@@ -803,7 +801,7 @@ printf '# task\n- [x] done\n' > "$RPROJ/plan/001.md"
 "$RV" "$RPROJ/plan/001.md" "$RT" > /dev/null; code=$?
 assert_exit "it reverts a worker's changes" 0 "$code"
 assert_eq "it restores a shared file to before the worker's first change" "earlier task" "$(cat "$RPROJ/src/Shared.php")"
-[ -e "$RPROJ/src/New.php" ]; assert_exit "it deletes a file the worker created" 1 "$?"
+assert_eq "it deletes a file the worker created" "gone" "$([ -e "$RPROJ/src/New.php" ] || echo gone)"
 assert_contains "it leaves the plan directory alone" "$(cat "$RPROJ/plan/001.md")" "- [x] done"
 printf 'changed\n' > "$RPROJ/src/Shared.php"
 "$RV" "$RPROJ/plan/001.md" "$RT" --dry-run > /dev/null 2>&1
@@ -862,7 +860,7 @@ fmt_use() { jq -cn --arg c "$1" --arg cwd "$RPROJ" '{type:"assistant", cwd:$cwd,
 printf '<?php echo 1;\n' > "$RPROJ/src/Made.php"
 "$RV" "$RPROJ/plan/001.md" "$RPROJ/agent-fmt.jsonl" > /dev/null 2>&1; code=$?
 assert_exit "it reverts a created file the worker then formatted" 0 "$code"
-[ -e "$RPROJ/src/Made.php" ]; assert_exit "it deletes a created file the worker formatted" 1 "$?"
+assert_eq "it deletes a created file the worker formatted" "gone" "$([ -e "$RPROJ/src/Made.php" ] || echo gone)"
 printf 'earlier task\n' > "$RPROJ/src/Kept.php"
 { res "$RPROJ/src/Kept.php" edit "earlier task
 " "earlier task
@@ -879,4 +877,98 @@ printf '<?php echo 1;\n' > "$RPROJ/src/Made.php"
 "$RV" "$RPROJ/plan/001.md" "$RPROJ/agent-fmt3.jsonl" > /dev/null 2>&1; code=$?
 assert_exit "it still refuses a created file changed by someone else" 1 "$code"
 
+{ res "$RPROJ/src/lib.rs" create "fn  main() {}
+"; fmt_use "cargo fmt -- src/lib.rs"; } > "$RPROJ/agent-fmt4.jsonl"
+printf 'fn main() {}\n' > "$RPROJ/src/lib.rs"
+"$RV" "$RPROJ/plan/001.md" "$RPROJ/agent-fmt4.jsonl" > /dev/null 2>&1; code=$?
+assert_exit "it knows a subcommand formatter (cargo fmt) as the worker's own write" 0 "$code"
+assert_eq "it deletes the file cargo fmt rewrote" "gone" "$([ -e "$RPROJ/src/lib.rs" ] || echo gone)"
+
 rm -rf "$RPROJ"
+
+# --- Counting a Write, deletions, tasks without requirements, records ---
+NP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/hcf-more.XXXXXX")" && pwd -P)"
+mkdir -p "$NP/.claude/plans/demo" "$NP/src" "$NP/tests" "$NP/var/cache" "$NP/my rules"
+git -C "$NP" init -q; printf 'var/\n' > "$NP/.gitignore"
+NTASK="$NP/.claude/plans/demo/001-demo.md"
+printf '# Task 001\n- [ ] `it adds two numbers`\n- [ ] `it subtracts two numbers`\n' > "$NTASK"
+_m=0
+n_use() { _m=$((_m + 1)); jq -cn --arg id "n$_m" --arg name "$1" --argjson in "$2" --arg cwd "$NP" \
+  '{type:"assistant", cwd:$cwd, message:{content:[{type:"tool_use", id:$id, name:$name, input:$in}]}}'; }
+n_res() { jq -cn --arg id "n$_m" --arg out "${1:-ok}" '{type:"user", message:{content:[{type:"tool_result", tool_use_id:$id, is_error:false, content:$out}]}}'; }
+# n_res_orig <originalFile>: a Write result as Claude Code records it, with the file's content from before.
+n_res_orig() { jq -cn --arg id "n$_m" --arg o "$1" '{type:"user", toolUseResult:{type:"update", originalFile:$o}, message:{content:[{type:"tool_result", tool_use_id:$id, is_error:false, content:"ok"}]}}'; }
+n_test() { n_use Edit "$(jq -cn --arg p "$NP/tests/CalcTest.php" --arg s "it('$1', function () {});" '{file_path:$p, old_string:"", new_string:$s}')"; n_res; }
+n_write() { n_use Write "$(jq -cn --arg p "$NP/tests/CalcTest.php" --arg s "$1" '{file_path:$p, content:$s}')"; }
+n_src() { n_use Edit "$(jq -cn --arg p "$NP/src/Calc.php" '{file_path:$p, old_string:"a", new_string:"b"}')"; n_res; }
+n_red() { n_use Bash "$(jq -cn --arg c "./vendor/bin/pest --filter=\"$1\"" '{command:$c}')"; n_res "FAILED  CalcTest > $1  Tests: 1 failed"; }
+n_bash() { n_use Bash "$(jq -cn --arg c "$1" '{command:$c}')"; n_res ""; }
+n_verify() { "$VT" "${2:-$NTASK}" "$1" > "$NP/out" 2>&1; echo $?; }
+n_gate() { HCF_GATE_TOOL=Bash HCF_GATE_CMD="$1" HCF_GATE_CWD="$NP" "$VT" --gate "${3:-$NTASK}" "${2:-$NP/armed.jsonl}"; }
+TA="it('adds two numbers', function () {});"; TB="it('subtracts two numbers', function () {});"; TOLD="it('an earlier task wrote this', function () {});"
+
+# A Write that rewrites a test file adds only what it holds over the file as it was.
+{ n_test "adds two numbers"; n_red "adds two numbers"; n_src
+  n_write "$TA
+$TB"; n_res; n_red "subtracts two numbers"; n_src; } > "$NP/edit-then-write.jsonl"
+assert_exit "it counts a Write after an Edit to the same test file as one new test" 0 "$(n_verify "$NP/edit-then-write.jsonl")"
+{ n_write "$TOLD
+$TA"; n_res_orig "$TOLD"; n_red "adds two numbers"; n_src
+  n_test "subtracts two numbers"; n_red "subtracts two numbers"; n_src; } > "$NP/write-over-uncommitted.jsonl"
+assert_exit "it counts a Write over an earlier task's uncommitted tests against the recorded snapshot" 0 "$(n_verify "$NP/write-over-uncommitted.jsonl")"
+{ n_write "$TA
+$TB"; n_res_orig ""; n_red "adds two numbers"; n_src; n_red "subtracts two numbers"; n_src; } > "$NP/write-batch.jsonl"
+assert_exit "it still fails a Write that adds two tests at once" 1 "$(n_verify "$NP/write-batch.jsonl")"
+assert_contains "it names the batch-writing violation for that Write" "$(cat "$NP/out")" "R3 2 new tests"
+
+# Deleting, renaming, downloading and committing from Bash.
+{ n_test "adds two numbers"; n_red "adds two numbers"; } > "$NP/armed.jsonl"
+for c in 'rm src/Calc.php' 'rm -rf tests' 'unlink src/Calc.php' 'git rm src/Calc.php' 'git mv src/Calc.php src/B.php' \
+  'find src -name "*.php" -delete' 'find . -name "*.php" -exec rm {} +' 'curl -so src/x.php http://example.test/x' \
+  'php -r "unlink(\"src/Calc.php\");"' 'bash -c "rm src/Calc.php"'; do
+  assert_contains "it refuses: $c" "$(n_gate "$c")" "DENY-BASH $NP"
+done
+assert_contains "it refuses a commit" "$(n_gate 'git commit -am wip')" "DENY-BASH"
+for c in 'rm -rf var/cache' 'rm -f var/cache/x.php && ./vendor/bin/pest' 'rm -rf /tmp/hcf-scratch' 'git rm --cached src/Calc.php' \
+  'find var -name "*.php" -delete' 'find src -name "*.php"' 'curl -s http://example.test/x' 'curl -so /dev/null http://example.test/x' 'docker compose run --rm app ./vendor/bin/pest'; do
+  assert_eq "it allows: $c" "ALLOW" "$(n_gate "$c")"
+done
+{ cat "$NP/armed.jsonl"; n_bash "rm src/Old.php"; } > "$NP/deleted.jsonl"
+n_verify "$NP/deleted.jsonl" > /dev/null
+assert_contains "it reports a deleted project file as R4" "$(cat "$NP/out")" "R4 project file changed from Bash (only Edit/Write may change files): $NP/src/Old.php"
+
+# A task with no test requirements skips the TDD method, nothing else.
+NDOC="$NP/.claude/plans/demo/002-config.md"; printf '# Task 002\nUpdate the config.\n' > "$NDOC"; : > "$NP/empty.jsonl"
+assert_eq "it refuses a Bash write in a task without requirements" "DENY-BASH $NP/src/Calc.php" "$(n_gate 'echo x > src/Calc.php' "$NP/empty.jsonl" "$NDOC")"
+assert_contains "it refuses a bare formatter run in a task without requirements" "$(n_gate './vendor/bin/pint' "$NP/empty.jsonl" "$NDOC")" "DENY-FORMAT"
+assert_eq "it allows an Edit to a production file in a task without requirements" "ALLOW" \
+  "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$NP/src/Calc.php" HCF_GATE_CWD="$NP" "$VT" --gate "$NDOC" "$NP/empty.jsonl")"
+n_src > "$NP/doc-clean.jsonl"
+assert_exit "it reports a clean task without requirements as NONE" 4 "$(n_verify "$NP/doc-clean.jsonl" "$NDOC")"
+{ n_src; n_bash "echo x > src/Calc.php"; } > "$NP/doc-bash.jsonl"
+assert_exit "it fails a task without requirements that wrote a file from Bash" 1 "$(n_verify "$NP/doc-bash.jsonl" "$NDOC")"
+assert_contains "it names R4 for it" "$(cat "$NP/out")" "R4 project file changed from Bash"
+
+# The guard's records: the tests it counted for a Write, and the transcript.
+jq -cn --arg cwd "$NP" --arg p "$NP/tests/CalcTest.php" --arg s "$TA" \
+  '{type:"assistant", cwd:$cwd, hcf_added:0, message:{content:[{type:"tool_use", id:"s1", name:"Write", input:{file_path:$p, content:$s}}]}}' > "$NP/rewrite.calls"
+assert_eq "it trusts the guard's own count for a Write that has no result yet" "ALLOW" \
+  "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$NP/src/Calc.php" HCF_GATE_CWD="$NP" HCF_GATE_SIDECAR="$NP/rewrite.calls" "$VT" --gate "$NTASK" "$NP/armed.jsonl")"
+printf 'rules\n' > "$NP/my rules/testing.md"
+n_prompt() { jq -cn --arg t "## Task File Path
+$NTASK
+
+## Project Testing Configuration
+Read \`$NP/my rules/testing.md\` IN FULL before writing any code.
+
+## Your Task
+$(cat "$NTASK")" '{type:"user", message:{content:$t}}'; }
+n_guard() { jq -cn --arg tp "$1" --arg cwd "$NP" --arg p "$NP/src/Calc.php" '{agent_id:"n9", agent_type:"hcf:tdd-worker", agent_transcript_path:$tp, cwd:$cwd, tool_name:"Edit", tool_use_id:"g1", tool_input:{file_path:$p, old_string:"a", new_string:"b"}}' | "$GD"; }
+{ n_prompt; cat "$NP/armed.jsonl"; } > "$NP/agent-unread.jsonl"
+assert_contains "it holds a worker until it has read a rules file whose path has a space" "$(n_guard "$NP/agent-unread.jsonl")" "$NP/my rules/testing.md"
+{ n_prompt; n_use Read "$(jq -cn --arg p "$NP/my rules/testing.md" '{file_path:$p}')"; n_res; cat "$NP/armed.jsonl"; } > "$NP/agent-read.jsonl"
+assert_empty "it lets the worker on once that file is read" "$(n_guard "$NP/agent-read.jsonl")"
+assert_eq "it records which transcript holds the task's changes" "$NP/agent-read.jsonl" "$(cat "$NP/.claude/plans/demo/.tdd/001-demo.md.transcript" 2>/dev/null)"
+assert_contains "it records the tests each allowed change adds" "$(cat "$NP/.claude/plans/demo/.tdd/001-demo.md.n9.calls" 2>/dev/null)" '"hcf_added":0'
+
+rm -rf "$NP"

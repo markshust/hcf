@@ -47,6 +47,11 @@ Execution → Parallel TDD workers implement autonomously
 
 ### Installation
 
+HCF needs `git`, a test framework in your project, and two tools on your
+`PATH`: `jq` and `python3` ([TDD Enforcement](#tdd-enforcement) reads worker
+transcripts with them). Without `jq` a worker can change no files; a task is
+never accepted unverified.
+
 Add the marketplace, install, then reload:
 
 ```bash
@@ -281,106 +286,40 @@ Each task follows strict Red → Green → Refactor:
 2. Write minimum code to pass
 3. Refactor while tests stay green
 4. Repeat for next requirement
-5. Commit when task complete
+
+Nothing is committed per task: `plan-orchestrate` makes one commit once every
+task is done and the full suite passes.
 
 ### TDD Enforcement
 
 HCF does not take a worker's word for how it worked. Every `tdd-worker` is
 checked mechanically, from its own transcript, by hooks that ship with the
-plugin (no setup needed):
+plugin (no setup beyond `jq` and `python3`):
 
-- **Edit guard** (`PreToolUse`): inside a `tdd-worker`, a production file can
-  only change after a test run *filtered to the current requirement* has
-  failed. Adding a new test locks it again until that test fails. The guard
-  also refuses a second new test before the first has run, more than one new
-  test in a single edit, any project file changed from Bash (redirects
-  including `cat <<EOF > file`, `tee`, `sed -i`, `cp`/`mv`/`ln`/`install`/
-  `rsync`/`touch`/`truncate`/`dd of=`, `patch`, `git apply`/`checkout`/
-  `restore` and other tree-changing git commands, code generators such as
-  `artisan make:`, `sh -c`/`bash -c`/`eval` or a script piped into a shell
-  that writes, interpreter scripts — files change only through Edit/Write), an
-  edit to the task file that removes or renames a requirement or labels one
-  `(guard)`,
-  any change to another checkout of the same repository (the main worktree or
-  another `git worktree`; paths outside the repository, such as `/tmp`, stay
-  allowed), and a formatter run without an explicit file list. Each refusal tells the
-  worker what to do instead. Calls it has allowed are also kept in a sidecar
-  (`<plan>/.tdd/<task>.md.<agent id>.calls`), because the transcript can lag
-  behind tools streamed in one message.
-- **What counts as red.** A test run is a command whose *executed* program is
-  a test runner (after wrappers such as `docker compose exec <service>`,
-  `npx`, `python -m`, `env`, `sh -c`), never a runner named in a comment or as
-  an argument to `echo`/`ls`/`grep`. It is red for a requirement only when it
-  is filtered to that requirement and its output shows a test failure: a
-  failing-test line as Pest, PHPUnit, Vitest, Jest, pytest, Go, Rust or RSpec
-  print it, a failure count (`Tests: 1 failed`, so output trimmed with `tail`
-  still counts), an assertion failure, or a compile or collection failure.
-  Such a line counts only at the start of an output line (a passing test
-  named "…FAILED…" is not a failure) and never when the command printed it
-  itself (`echo "FAILED …"`). Infrastructure errors
-  (Docker or a database unreachable, command not found, no tests found,
-  out of memory, a parse or syntax error) are never red. Names are compared
-  normalised, so `it creates a user`, `test_creates_a_user`,
-  `testCreatesAUser` and `TestCreatesAUser` match.
-- **Requirements come from the prompt.** The requirement list (names and
-  `(guard)` labels) is read from the `## Your Task` section of the worker's
-  first prompt, where `plan-orchestrate` pastes the task file; removing or
-  renaming one in the task file, or labelling one `(guard)`, is a violation.
-  A requirement the worker adds there is allowed and verified like the rest. Only when the prompt has no
-  checklist is the task file read instead.
-- **First-run passes are cut back.** When a test passes on its first filtered
-  run, some production code already delivers it. The worker **cuts it back**:
-  until the pass is answered the guard allows only removal-only Edits to
-  production files (the edit's new text keeps some of the old text's tokens in
-  order and adds none), and once the test fails on a filtered run the code is
-  rebuilt in GREEN. The verifier counts that as red before green; a cut-back
-  not followed by a failing run of that requirement (before any other
-  production change or new test) is a violation. The worker may instead fix a
-  wrong test. Only behaviour that **no production code** delivers (a language
-  or framework guarantee) may be recorded as
-  `PASSED-FIRST: <requirement> — no-code: <why>`, which the orchestrator
-  reviews; a `PASSED-FIRST` line without `no-code:` is a violation.
-- **Fails closed inside a worker.** If the guard cannot check a call (the
-  verifier errors), it refuses the call. If the hooks cannot establish a
-  `tdd-worker`'s context at all (`jq` missing, its transcript or task file
-  unreadable, no `## Task File Path` in its prompt), the guard refuses every
-  file change and the stop hook writes an `ERROR` verdict where it can and
-  tells the worker to end with `TASK_FAILED: TDD hooks could not run — <why>`.
-  Outside a `tdd-worker` the hooks do nothing.
-- **Verifier** (`SubagentStop`): when a worker stops, `hooks/verify-tdd.sh`
-  replays its transcript and writes a verdict to
-  `<plan>/.tdd/<task file name>.verdict` (e.g. `.tdd/001-foo.md.verdict`) —
-  `OK`, `REVIEW` (justified first-run passes to review), `FAILED`, `NONE` (the
-  task has no test requirements, so nothing was checked) or `ERROR`. Its
-  `transcript:` line names the transcript it judged, so the orchestrator can
-  tell a stale verdict from the current worker's. A failed worker is told to
-  end with `TASK_FAILED`.
-- **Exact revert**: `plan-orchestrate` rejects a `FAILED` task (and a `REVIEW`
-  where production code does deliver the behaviour), and undoes exactly that
-  worker's file changes with `hooks/revert-task.sh` — earlier tasks' changes
-  to the same files survive, and so do changes a parallel task made to the
-  same file afterwards (the worker's own edits are undone around them, or the
-  file is left untouched and reported) — before retrying it. A requirement
-  the worker never started is reported as "not attempted (no test written)",
-  so an unfinished task reads differently from a method violation: when those
-  are its only violations, the worker reports `TASK_FAILED: unfinished — …`
-  and the orchestrator resumes it instead of reverting its finished work.
+- **Edit guard**: while a worker runs, a production file can change only after
+  a test run *filtered to the current requirement* has failed, and one new test
+  at a time. Files change only through Edit/Write, never from Bash (no
+  redirects, `sed -i`, deletions, renames or commits), and only inside the
+  worker's own checkout. Each refusal tells the worker what to do instead.
+- **First-run passes are cut back**: a test that passes on its first run means
+  code already delivers it. The worker deletes that code until the test fails,
+  then rebuilds it. Requirements expected to pass on arrival are labelled
+  `(guard)` by `plan-create`.
+- **Verifier**: when a worker stops, its whole transcript is replayed and a
+  verdict is written to `<plan>/.tdd/<task file>.verdict`: `OK`, `REVIEW`,
+  `FAILED`, `NONE` (no test requirements) or `ERROR`.
+- **Exact revert**: `plan-orchestrate` reads the verdict before accepting a
+  task. A `FAILED` task is discarded: exactly that worker's file changes are
+  undone (other tasks' changes to the same files survive) and the task is
+  retried from a clean start. An unverified task is never accepted.
 
-Requirements that should already pass when written (a second input to the same
-default, a second entry point into the same code path) are labelled `(guard)`
-by `plan-create`: `` - [ ] `it reads arguments from the cache` (guard) ``. A
-guard only has to be run on its own; it may pass on the first run.
-
-A test run is recognised by the program it runs (Pest, PHPUnit, Jest, Vitest,
-pytest, RSpec, Mocha, `go test`, `cargo test`, `npm`/`yarn`/`pnpm`/`bun test`,
-`composer`/`mix`/`artisan test`, and more). A test file is recognised by its
-path relative to the project: under `tests/`, `test/`, `spec/`, `specs/` or
-`__tests__/`, or named `FooTest.php`, `foo.test.ts`, `foo.spec.js`,
-`foo_test.go`, `foo_spec.rb`, `FooSpec.rb` or `test_foo.py` (a file named just
-`Spec.php` or `Test.php` is production code). For anything else, see
-[Test Runners](#test-runners). HCF relies
-on TDD: a project with no test framework should set one up (`/hcf:project-setup`)
-rather than skip verification.
+Inside a worker the hooks fail closed, and outside one they do nothing. The
+full rules (what counts as a failing run, what a test file is, what the guard
+refuses, the verdicts and the files under `.tdd/`) are in
+[HOOKS.md](HOOKS.md#tdd-enforcement-hooks-not-agent-hook-points). To teach HCF
+a test runner it does not know, see [Test Runners](#test-runners). HCF relies
+on TDD: a project with no test framework should set one up
+(`/hcf:project-setup`) rather than skip verification.
 
 ## Reference
 
@@ -402,6 +341,9 @@ rather than skip verification.
 | `001-{task}.md` | First task with requirements |
 | `002-{task}.md` | Second task |
 | ... | More tasks |
+| `.tdd/` | TDD verification records per task: verdicts and the edit guard's notes (see [HOOKS.md](HOOKS.md#records)) |
+
+Plan files, `.tdd/` included, are working state and are never committed.
 
 ### Task Format
 
@@ -419,9 +361,12 @@ Create the User model with authentication fields.
 - [ ] `it creates a user with valid email and password`
 - [ ] `it hashes the password before storing`
 - [ ] `it validates email uniqueness`
+- [ ] `it validates email uniqueness regardless of case` (guard)
 ```
 
-Requirements become test names directly.
+Requirements become test names directly. `(guard)` marks one that an earlier
+requirement in the same task already delivers, so it may pass on its first run
+(see [TDD Enforcement](#tdd-enforcement)).
 
 ### Skills
 
@@ -457,6 +402,13 @@ hcf/
 │   ├── gate-skill.sh         # PreToolUse gate on the planning skills
 │   ├── gate-command.sh       # UserPromptExpansion gate on the planning skills
 │   ├── pipeline-status.sh    # Shared helper sourced by the gates
+│   ├── resolve-project-dir.sh # Finds the project root
+│   ├── resolve-plans-dir.sh  # Resolves the plans directory (.claude/hcf.json)
+│   ├── tdd-guard.sh          # PreToolUse edit guard inside a tdd-worker
+│   ├── tdd-subagent-stop.sh  # SubagentStop: writes the TDD verdict
+│   ├── tdd-context.sh        # Shared helper sourced by the TDD hooks
+│   ├── verify-tdd.sh         # The TDD verifier both hooks call
+│   ├── revert-task.sh        # Undoes exactly one worker's file changes
 │   └── hooks.json            # Lifecycle hook registrations
 ├── skills/
 │   ├── project-setup/
@@ -584,10 +536,7 @@ as never having failed.
 - Claude Code CLI
 - Git repository
 - Test framework configured in project
-- `jq` (TDD verification reads worker transcripts with it) and `python3`
-  (exact task revert). Without `jq`, a `tdd-worker` can change no files and is
-  stopped with an `ERROR` verdict; without `python3`, revert refuses to run. A
-  task is never accepted unverified.
+- `jq` and `python3` (see [Installation](#installation))
 
 ### Local Testing
 

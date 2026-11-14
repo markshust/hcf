@@ -417,12 +417,38 @@ also what makes drift (exit 4) surface promptly rather than at the end.
 **Mark the batch.** Set each task's status to `in_progress` in its task file and
 in the task table in `_plan.md`, and add it to the running set.
 
-**Clear stale TDD records.** For each task, delete any verdict and guard
-sidecar left by an earlier worker on the same task, so Step 6 can never read
-an old one: `rm -f "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md.verdict" "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md".*.calls`
-(the file name includes `.md`: for `001-foo.md` these are `.tdd/001-foo.md.verdict`
-and `.tdd/001-foo.md.<agent-id>.calls`). Skip this when resuming an unfinished
-task with SendMessage (Step 6): the same worker keeps its records.
+**Give every fresh worker a clean start.** The verifier holds a worker to
+**every** requirement in its prompt, ticked or not, and judges only that
+worker's own transcript. A fresh worker handed a task an earlier worker partly
+did (a retry, or a task left `in_progress` by an interrupted run) can therefore
+never pass: the ticked requirements have no failing run in its transcript. So
+before launching a fresh worker on a task, undo whatever an earlier worker left
+(skip all of this when resuming the *same* worker with SendMessage in Step 6:
+it keeps its work and its records):
+
+1. **Find the earlier worker's transcript.** The task's records live in
+   `$PLANS_DIR/{plan-name}/.tdd/`, named after the task file **including** its
+   `.md`. For `001-foo.md`: `.tdd/001-foo.md.transcript` holds the path (the
+   edit guard writes it with the worker's first file change), and
+   `.tdd/001-foo.md.verdict` names it on its `transcript:` line.
+2. **If there is one, revert that worker's changes:**
+   `"{skill-base-dir}/../../hooks/revert-task.sh" "<task file>" "<that transcript>"`
+   (see [Rejecting a FAILED task](#step-6-collect-one-result) for what it does
+   and why `git checkout` is never used). If it exits non-zero (a file could not
+   be reverted exactly, or the transcript is gone), do **not** launch the task:
+   set it to `blocked` with that reason and report it to the user.
+3. **If there is none but the task file has ticked requirements or
+   Implementation Notes** (work from a run whose records are gone), nothing can
+   be reverted exactly and nothing can be verified. Do **not** launch the task:
+   set it to `blocked` with the reason `partly done by an unverified earlier
+   run` and report it to the user, who decides whether to discard that work.
+4. **Reset the task file:** untick every requirement and clear its
+   Implementation Notes (keep its retry count).
+5. **Delete the records**, so Step 6 can never read an old verdict:
+   `rm -f "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md.verdict" "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md.transcript" "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md".*.calls`
+
+A task no worker has touched has no records and no ticks: steps 2 to 4 do
+nothing for it.
 
 **Launch.** Spawn one `tdd-worker` per task as a **background** subagent, all in
 a single message, and do **not** wait for them here:
@@ -458,10 +484,10 @@ Batch {B} launched: tasks {list} (running {len(running)})
 {the concrete resolved path, e.g. $PLANS_DIR/{plan-name}/{task-file}.md}
 
 ## Project Testing Configuration
-Read {absolute path of <testing>} IN FULL before writing any code; follow every rule in it.
+Read `{absolute path of <testing>}` IN FULL before writing any code; follow every rule in it.
 
 ## Code Standards
-Read {absolute path of <code-standards>} and {absolute path of CLAUDE.md} IN FULL before writing any code.
+Read `{absolute path of <code-standards>}` and `{absolute path of CLAUDE.md}` IN FULL before writing any code.
 
 ## Parallel Run
 {only when <testing> asks for per-worker resources (e.g. one test database per
@@ -481,7 +507,8 @@ task file, which the worker can edit, and that protection is lost.
 
 Keep the words `IN FULL` on every line that names a file to read: the edit
 guard reads those paths from the prompt and refuses every file change but the
-task file until the worker has opened each one with the Read tool.
+task file until the worker has opened each one with the Read tool. Keep each
+path absolute and in backticks, so a path with a space in it is read whole.
 
 The tdd-worker agent already has all TDD methodology and rules. The prompt needs the project-specific configuration and task details since subagents do not inherit CLAUDE.md context.
 
@@ -528,7 +555,13 @@ file, and do not count it as a retry.
    the finished requirements, so they would all be reported "not attempted".
    If the worker cannot be resumed (its session is gone), handle the task as a
    rejected `FAILED` task below instead.
-3. A requirement left deliberately for later (e.g. one that needs a live
+3. **A resume must make progress.** If the resumed worker stops `unfinished`
+   again without having ticked a single further requirement, do not resume it
+   a second time: handle the task as a rejected `FAILED` task below (reverted,
+   counted as a retry), with the reason `unfinished — no progress after resume`.
+   This also catches a worker whose tests are not named after their
+   requirements, which the verifier keeps reporting as "not attempted".
+4. A requirement left deliberately for later (e.g. one that needs a live
    service) stays unfinished: report it to the user, keep the task `pending`,
    and resume the worker when it can continue.
 
@@ -549,7 +582,9 @@ not built test-first is not kept, even if its tests pass.
    task's work too.
 2. Run the package's test suite: it must be back to its state before the task.
 3. Reset the task file: uncheck its requirements, clear its Implementation
-   Notes, delete its verdict file and its `.tdd/<task file name>.*.calls` sidecars.
+   Notes, and delete its records (`.tdd/<task file name>.verdict`,
+   `.tdd/<task file name>.transcript` and the `.tdd/<task file name>.*.calls`
+   sidecars), so the clean start in Step 5 finds nothing left to undo.
 4. Handle it as **TASK_FAILED** below with the reason `TDD verification failed`
    and the verdict's violation lines in the log.
 5. **Report it to the user at once**, with the violations. Do not let it pass
@@ -563,8 +598,11 @@ ended without one, accept the task when the verdict is `OK` (or an accepted
 `REVIEW`) and every requirement is checked.
 
 1. Verify all requirements are checked in task file
-2. Set task status to `completed`
-3. Update the task table in `_plan.md`
+2. If the task's Implementation Notes name project files to delete or rename,
+   do that yourself now: a worker cannot (the edit guard refuses deletions and
+   renames from Bash, because `revert-task.sh` could not undo them).
+3. Set task status to `completed`
+4. Update the task table in `_plan.md`
 
 > **NOTE:** Do NOT commit here. All commits are deferred to Step 4a, after standards enforcement and the full test suite pass. This ensures no non-standard code is ever committed.
 
@@ -574,9 +612,14 @@ ended without one, accept the task when the verdict is `OK` (or an accepted
    - Set status to `blocked`
    - Set blocked reason from error message
    - Update task table in `_plan.md`
+   - Revert its last worker's changes (Step 5's clean start, steps 1 and 2),
+     so a blocked task's unverified work is not left in the tree to be committed
 3. If retry count < 3:
    - Set status back to `pending` (it is ready again on the next pass through Step 3)
    - Log the failure for visibility
+   - Leave the failed worker's changes and records where they are: the clean
+     start in Step 5 reverts them and resets the task file before the retry's
+     fresh worker launches (a rejected `FAILED` task was already reverted above)
 
 **Post-batch hook.** If this result was the **last** outstanding task of its
 batch, run the `post-batch` hook for that batch via the
@@ -627,12 +670,18 @@ commit.
 If a task has status `in_progress` at startup (from an interrupted previous run):
 - Treat it as `pending` and include in ready check — no worker from this session is running it
 - Tasks this session marked `in_progress` in Step 5 are in the running set and are never relaunched
-- The worker will pick up where it left off based on [x] marks
+- Its interrupted worker cannot be resumed, so the task starts over: the clean
+  start in Step 5 reverts that worker's changes and resets the task file before
+  a fresh worker launches
 
 ### Partial Completion
-If some requirements are already [x] in a task:
-- Worker will skip those and continue with unchecked ones
-- This enables resumption after interruption
+If some requirements are already [x] in a task that is not `completed`:
+- A fresh worker never continues from them: TDD verification covers one
+  worker's transcript, so work it cannot see was never verified
+- Within one session the *same* worker is resumed with SendMessage (Step 6,
+  unfinished task) and keeps its ticks
+- Otherwise the clean start in Step 5 reverts the earlier work, or blocks the
+  task when it cannot
 
 ### Dependency on Blocked Task
 If task A depends on blocked task B:

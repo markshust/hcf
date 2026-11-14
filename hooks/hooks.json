@@ -1,5 +1,5 @@
 {
-  "description": "HCF lifecycle hooks. Detects a legacy .claude/pipeline.md and blocks the planning workflow (plan-create / plan-orchestrate) until it is migrated with /hcf:project-update.",
+  "description": "HCF lifecycle hooks. Detects a legacy .claude/pipeline.md and blocks the planning workflow (plan-create / plan-orchestrate) until it is migrated with /hcf:project-update. Inside a tdd-worker, enforces the TDD method on every file change (tdd-guard.sh) and verifies it from the transcript when the worker stops (tdd-subagent-stop.sh).",
   "hooks": {
     "SessionStart": [
       {

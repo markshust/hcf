@@ -6,7 +6,6 @@
 # Usage:
 #   verify-tdd.sh <task-file> <agent-transcript.jsonl>            # verify
 #   verify-tdd.sh --state <task-file> <agent-transcript.jsonl>    # ARMED | DISARMED
-#   verify-tdd.sh --touched <task-file> <agent-transcript.jsonl>  # files the worker changed
 #   verify-tdd.sh --gate <task-file> <agent-transcript.jsonl>     # ALLOW | DENY <path> | DENY-BASH <path>
 #   verify-tdd.sh --removal-only <Edit|MultiEdit>  < tool-input.json  # yes | no
 #   verify-tdd.sh --count-tests <Edit|MultiEdit|Write> < tool-input.json  # tests the call adds
@@ -31,14 +30,17 @@
 #   failed, and the task file has no no-code PASSED-FIRST line for it).
 #
 # --state prints whether a production edit would be allowed right now (a
-# failing test has armed it and no new test has disarmed it since). --touched
-# lists, one per line, every project file the worker edited or wrote, so the
-# orchestrator can revert exactly that task's work. --removal-only reads an
+# failing test has armed it and no new test has disarmed it since); the tests
+# use it. --removal-only reads an
 # Edit or MultiEdit tool input (JSON) on stdin and says whether it only deletes
 # code (see "Cut-back" below). --count-tests reads a tool input on stdin and
 # prints how many tests the call adds (Edit/MultiEdit: new minus old; Write:
-# content minus the file on disk). The edit guard uses both, so the guard and
-# the verifier always count the same way.
+# content minus the file on disk). The edit guard uses both. The verifier
+# counts a Write the same way, against the file as it was just before the
+# Write: the snapshot Claude Code records with the result
+# (toolUseResult.originalFile), or the count the guard recorded in its sidecar.
+# Only when neither exists does it fall back to the tests this transcript has
+# put in the file so far, over what the file held at HEAD.
 #
 # Requirements: "- [ ] `name`" / "- [x] `name`" lines, optionally followed by
 # (guard). They are read from the worker's FIRST prompt, under its
@@ -101,8 +103,10 @@
 #       tests and then running them is batch-writing, not TDD.
 #   R4  Project files change only through Edit/Write/MultiEdit/NotebookEdit.
 #       A Bash write (redirect, heredoc into a file, tee, sed -i, cp/mv/ln/
-#       install/rsync/touch/truncate/dd of=, patch, git apply/checkout/restore
-#       and other tree-changing git commands, a code generator such as
+#       install/rsync/touch/truncate/dd of=, patch, curl -o / wget, deleting
+#       with rm/unlink/rmdir/find -delete (files git ignores, such as caches
+#       and build output, may be deleted), git apply/checkout/restore/rm/mv/
+#       commit and other tree-changing git commands, a code generator such as
 #       artisan make: or any "fileGenerators" entry, sh -c/bash -c/eval or a
 #       script piped into a shell that writes, or an interpreter script that
 #       writes files) is a violation in itself, whether or not the command
@@ -164,14 +168,19 @@
 #   1  violations found (listed on stdout)
 #   2  no violations, but warnings need review
 #   3  usage error, unreadable input, or jq missing
-#   4  the task has no test requirements (docs, config): nothing was checked
+#   4  the task has no test requirements (docs, config): the TDD method was
+#      not checked. R4 and R6 still are (exit 1 when broken), and --gate still
+#      refuses Bash writes, other checkouts and bare formatter runs.
 
 set -u
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=hooks/tdd-context.sh
+. "$DIR/tdd-context.sh"
 
 mode="verify"
 case "${1:-}" in
   --state) mode="state"; shift ;;
-  --touched) mode="touched"; shift ;;
   --gate) mode="gate"; shift ;;
   --removal-only) mode="removal"; shift ;;
   --count-tests) mode="count"; shift ;;
@@ -247,31 +256,31 @@ cmd_defs='
       elif $c == 34 or $c == 39 then .o += [$c] | .q = $c | .p = $c
       elif $c == 35 and (.p == 32 or .p == 9 or .p == 59 or .p == 38 or .p == 124 or .p == 40) then .done = true
       else .o += [$c] | .p = $c end) | .o | implode) | join("\n") end;
-  def writey: test("(^|[^0-9&>=-])>>?\\s*[^\\s&>]|(^|[\\s;&|(])(tee|touch|cp|mv|ln|install|rsync|dd|truncate|patch)\\s|(sed|perl)\\s+(-\\S+\\s+)*-i|git\\s+(apply|checkout|restore|stash|reset|clean|switch)");
-  # A heredoc fed to a shell (bash <<EOF) is a script: does it write?
-  def shellbody: [scan("(?:^|[\\s;&|(])(?:ba|z|da|k)?sh\\b[^\\n]*<<-?\\s*[\"\u0027]?(?<tag>[A-Za-z_][A-Za-z0-9_]*)[\"\u0027]?[^\\n]*\\n((?s:.*?))\\n\\s*\\k<tag>(?=\\n|$)") | .[1] | select(writey)] | if length > 0 then "1" else "" end;
-  # Interpreter one-offs (python3 - <<EOF ... open(p, "w")) also write files.
-  # Their targets are usually variables, so every file-like string literal in
-  # a writing script is treated as written: over-reporting beats a blind spot.
-  def scriptwrites: if test("(^|[^A-Za-z])(python3?|php|node|ruby|perl)([^A-Za-z]|$)") and test("open\\(|write_text|write_bytes|file_put_contents|writeFile|File\\.write|IO\\.write")
-      then [scan("[\"\u0027]([A-Za-z0-9_./-]+\\.(php|py|js|mjs|ts|tsx|jsx|rb|go|rs|java|kt|json|ya?ml|xml|neon|ini|toml|twig|latte|blade\\.php))[\"\u0027]") | .[0]] | unique | join(" ")
+  # A heredoc fed to a shell (bash <<EOF) is a script: its body, on one line,
+  # for the awk pass to judge with the same write check as any other command.
+  def shellbody: [scan("(?:^|[\\s;&|(])(?:ba|z|da|k)?sh\\b[^\\n]*<<-?\\s*[\"\u0027]?(?<tag>[A-Za-z_][A-Za-z0-9_]*)[\"\u0027]?[^\\n]*\\n((?s:.*?))\\n\\s*\\k<tag>(?=\\n|$)") | .[1] | oneline] | join(" ; ");
+  # Interpreter one-offs (python3 - <<EOF ... open(p, "w")) also write, delete
+  # and rename files. Their targets are usually variables, so every file-like
+  # string literal in such a script is treated as written: over-reporting
+  # beats a blind spot.
+  def scriptwrites: if test("(^|[^A-Za-z])(python3?|php|node|ruby|perl)([^A-Za-z]|$)") and test("open\\(|write_text|write_bytes|file_put_contents|writeFile|File\\.write|IO\\.write|unlink|os\\.(remove|rename|replace)|shutil\\.|rmSync|renameSync|rename\\(|File\\.(delete|rename)|FileUtils\\.")
+      then [scan("[\"\u0027]([A-Za-z0-9_./-]+\\.(php|py|js|mjs|ts|tsx|jsx|rb|go|rs|java|kt|json|ya?ml|xml|neon|ini|toml|twig|latte|blade\\.php))\\\\?[\"\u0027]") | .[0]] | unique | join(" ")
       else "" end;
   def norm: gsub("(?<a>[a-z0-9])(?<b>[A-Z])"; "\(.a) \(.b)") | gsub("(?<a>[A-Z])(?<b>[A-Z][a-z])"; "\(.a) \(.b)")
     | gsub("(?<a>[A-Za-z])(?<b>[0-9])"; "\(.a) \(.b)") | gsub("(?<a>[0-9])(?<b>[A-Za-z])"; "\(.a) \(.b)")
     | ascii_downcase | gsub("[^a-z0-9]+"; " ") | sub("^ +"; "") | sub(" +$"; "");
   def name_norm: (" " + norm) | until(test("^ (it|test)( |$)") | not; sub("^ (it|test)"; "")) | sub("^ +"; "");
-  # The first prompt: the first user message that carries text.
-  def prompt_text: .message.content | if type == "string" then . elif type == "array" then (map(select(.type == "text") | .text) | join("\n")) else "" end;
 '
 
 # The worker's first prompt, and the "## Your Task" section of it.
-first_prompt="$(jq -Rrn 'first(inputs | fromjson? | select(.type == "user") | (.message.content | if type == "string" then . elif type == "array" then (map(select(.type == "text") | .text) | join("\n")) else "" end) | select(length > 0)) // ""' "$transcript" 2>/dev/null)"
-prompt_task="$(printf '%s\n' "$first_prompt" | awk 'f { print } /^##[[:space:]]+Your Task[[:space:]]*$/ { f = 1 }')"
+first_prompt="$(hcf_first_prompt "$transcript")"
+prompt_task="$(printf '%s\n' "$first_prompt" | LC_ALL=C awk 'f { print } /^##[[:space:]]+Your Task[[:space:]]*$/ { f = 1 }')"
 
 # Requirement names, in order, one per line (backticks stripped). A test
 # requirement is a checklist item that is ONLY a backticked test name,
 # optionally labelled (guard). Descriptive checklist items that merely start
-# with code ("- [x] `docs/page.md` gains a section") are not tests.
+# with code ("- [x] `docs/page.md` gains a section") are not tests. The edit
+# guard (tdd-guard.sh) reads the same line shape in jq: keep the two in step.
 req_names() { sed -n 's/^[[:space:]]*- \[[ xX]\] `\([^`]*\)`[[:space:]]*\((guard)\)\{0,1\}[[:space:]]*$/\1/p'; }
 req_guards() { sed -n 's/^[[:space:]]*- \[[ xX]\] `\([^`]*\)`[[:space:]]*(guard)[[:space:]]*$/\1/p'; }
 
@@ -284,9 +293,12 @@ if [ -n "$prompt_requirements" ]; then
   # renamed, or newly labelled (guard), is violation R5.
   guards="$(printf '%s\n' "$prompt_task" | req_guards)"
   file_guards="$(req_guards < "$task_file")"
-  removed="$(comm -23 <(printf '%s\n' "$prompt_requirements" | sort -u) <(printf '%s\n' "$file_requirements" | sort -u) | awk 'NF { printf "%s`%s`", (n++ ? ", " : ""), $0 }')"
-  relabelled="$(comm -12 <(printf '%s\n' "$file_guards" | sort -u) <(comm -23 <(printf '%s\n' "$prompt_requirements" | sort -u) <(printf '%s\n' "$guards" | sort -u)) | awk 'NF { printf "%s`%s`", (n++ ? ", " : ""), $0 }')"
-  added="$(printf '%s\n' "$file_requirements" | awk 'NR == FNR { if (NF) seen[$0] = 1; next } NF && !seen[$0]' <(printf '%s\n' "$prompt_requirements") -)"
+  usort() { LC_ALL=C sort -u; }
+  # shellcheck disable=SC2016  # awk variables and literal backticks
+  name_list='NF { printf "%s`%s`", (n++ ? ", " : ""), $0 }'
+  removed="$(LC_ALL=C comm -23 <(printf '%s\n' "$prompt_requirements" | usort) <(printf '%s\n' "$file_requirements" | usort) | LC_ALL=C awk "$name_list")"
+  relabelled="$(LC_ALL=C comm -12 <(printf '%s\n' "$file_guards" | usort) <(LC_ALL=C comm -23 <(printf '%s\n' "$prompt_requirements" | usort) <(printf '%s\n' "$guards" | usort)) | LC_ALL=C awk "$name_list")"
+  added="$(printf '%s\n' "$file_requirements" | LC_ALL=C awk 'NR == FNR { if (NF) seen[$0] = 1; next } NF && !seen[$0]' <(printf '%s\n' "$prompt_requirements") -)"
   requirements="$prompt_requirements"
   if [ -n "$added" ]; then
     requirements="$(printf '%s\n%s' "$prompt_requirements" "$added")"
@@ -301,12 +313,10 @@ else
   requirements="$file_requirements"
   guards="$(req_guards < "$task_file")"
 fi
-if [ -z "$requirements" ] && [ "$mode" != "touched" ] && [ "$mode" != "state" ]; then
-  # A task with no test requirements (docs, config) has nothing to arm.
-  [ "$mode" = "gate" ] && { echo ALLOW; exit 0; }
-  printf 'verify-tdd: no test requirements in %s; nothing to verify\n' "$task_file"
-  exit 4
-fi
+# A task with no test requirements (docs, config) has nothing to arm, so the
+# TDD method is not checked for it. Everything else still is: files change
+# only through Edit/Write (R4), only in the worker's own checkout (R6), and
+# the gate refuses the same calls as for any other task.
 
 # The task directory, as given and with symlinks resolved: a plan directory is
 # often a symlink from a worktree into the main checkout.
@@ -365,16 +375,18 @@ jq -Rr "$cmd_defs"'name_norm' < "$tmp/reqs" > "$tmp/reqnorm"
 #   USE  <id> <tool> <path> <added-tests> <command> <cwd> <script-writes>
 #        <names> <R if removal-only> <shell-body-writes> <raw command>
 #   RES  <id> <is_error> <infra-error> <pass-evidence> <failure lines>
-#        <load-failure lines> <refused by the guard>
+#        <load-failure lines> <refused by the guard> <tests in the file just
+#        before the change, when the result recorded it>
 # Lines are joined with \036. Load-failure lines also carry failure summaries. "added-tests" counts test declarations added by
-# an Edit/MultiEdit (new minus old) or present in a Write's content (W prefix:
-# baseline resolved below). --gate reads a transcript that is still being
+# an Edit/MultiEdit (new minus old), the count the guard recorded for a Write
+# (sidecar lines), or the tests present in a Write's content (W prefix:
+# baseline resolved in the awk pass). --gate reads a transcript that is still being
 # written, so it parses line by line and skips a line that does not parse;
 # every other mode reads a finished transcript and rejects a broken one.
 jq_raw=""; jq_parse=""
 if [ "$mode" = "gate" ]; then jq_raw="-R"; jq_parse="fromjson? | "; fi
 # shellcheck disable=SC2086  # $jq_raw is empty or one flag
-events="$(jq $jq_raw -r --rawfile reqnorm "$tmp/reqnorm" "$removal_defs$cmd_defs"'
+if ! events="$(jq $jq_raw -r --rawfile reqnorm "$tmp/reqnorm" "$removal_defs$cmd_defs"'
   # A normalised name as a regex over source text: its words in order, in any
   # case, joined by nothing (camelCase) or by non-word characters (snake_case,
   # prose), starting and ending at a word boundary. Matching source this way
@@ -391,12 +403,13 @@ events="$(jq $jq_raw -r --rawfile reqnorm "$tmp/reqnorm" "$removal_defs$cmd_defs
      or test("^(FAIL|ERROR):\\s") or test("\\s\\.\\.\\.\\s+(FAILED|FAIL|ERROR)$") or test("^rspec\\s+\\S+\\s+#\\s")
      or test("\\s(FAILED|ERROR)(\\s+\\[\\s*[0-9]+%\\])?$"));
   '"$jq_parse"'select(.type == "assistant" or .type == "user")
-  | .cwd as $cwd
+  | .cwd as $cwd | .toolUseResult as $tur | .hcf_added as $ha
   | (.message.content // []) | if type == "array" then .[] else empty end
   | if .type == "tool_use" then
       (.input // {}) as $in
       | ( if .name == "Edit" then (($in.new_string // "") | ntests) - (($in.old_string // "") | ntests) | tostring
           elif .name == "MultiEdit" then ([($in.edits // [])[] | ((.new_string // "") | ntests) - ((.old_string // "") | ntests)] | add // 0) | tostring
+          elif .name == "Write" and ($ha | type) == "number" then $ha | tostring
           elif .name == "Write" then "W" + (((($in.content // $in.file_text) // "") | ntests) | tostring)
           else "0" end ) as $added
       | ($in.command // "") as $c
@@ -422,7 +435,9 @@ events="$(jq $jq_raw -r --rawfile reqnorm "$tmp/reqnorm" "$removal_defs$cmd_defs
           (if ($out | test("Tests:[^\\n]*\\b[1-9][0-9]* passed|\\bOK \\([1-9]|✓|✔|\\bPASS\\b|\\b[1-9][0-9]* (passed|passing)\\b|(^|\\n)ok\\s|test result: ok")) then "1" else "0" end),
           ([$lines[] | select(failline)] | join("\u001e")),
           ($loadlines + $sumlines | join("\u001e")),
-          (if .is_error == true and ($out | test("HCF TDD guard: refused")) then "1" else "0" end)
+          (if .is_error == true and ($out | test("HCF TDD guard: refused")) then "1" else "0" end),
+          (if ($tur | type) != "object" then "" elif $tur.type == "create" then "0"
+           elif ($tur.originalFile | type) == "string" then ($tur.originalFile | ntests | tostring) else "" end)
         ] | @tsv
     else empty end
 ' < <(
@@ -432,23 +447,25 @@ events="$(jq $jq_raw -r --rawfile reqnorm "$tmp/reqnorm" "$removal_defs$cmd_defs
   # latest calls; one already in the transcript is the same call again.
   if [ "$mode" = "gate" ] && [ -n "${HCF_GATE_SIDECAR:-}" ] && [ -r "${HCF_GATE_SIDECAR:-}" ]; then
     printf '\n'; cat "$HCF_GATE_SIDECAR"
-  fi) 2>/dev/null)"
-if [ $? -ne 0 ]; then
+  fi) 2>/dev/null)"; then
   printf 'verify-tdd: error: %s is not a readable JSONL transcript\n' "$transcript" >&2
   exit 3
 fi
 
 # The pending call, normalised the same way (the guard passes it raw).
-gate_cmd=""; gate_scripts=""; gate_shellbody=""
+# Passed in the environment, not with -v: awk would read backslashes in a -v
+# value as escapes.
+HCF_GATE_NORM=""; HCF_GATE_SCRIPTS=""; HCF_GATE_SHELLBODY=""
 if [ "$mode" = "gate" ] && [ "${HCF_GATE_TOOL:-}" = "Bash" ]; then
-  gate_cmd="$(jq -rn --arg c "${HCF_GATE_CMD:-}" "$cmd_defs"'$c | noheredoc | nocomment | oneline')"
-  gate_scripts="$(jq -rn --arg c "${HCF_GATE_CMD:-}" "$cmd_defs"'$c | scriptwrites') ${HCF_GATE_SCRIPTWRITES:-}"
-  gate_shellbody="$(jq -rn --arg c "${HCF_GATE_CMD:-}" "$cmd_defs"'$c | shellbody')"
+  HCF_GATE_NORM="$(jq -rn --arg c "${HCF_GATE_CMD:-}" "$cmd_defs"'$c | noheredoc | nocomment | oneline')"
+  HCF_GATE_SCRIPTS="$(jq -rn --arg c "${HCF_GATE_CMD:-}" "$cmd_defs"'$c | scriptwrites')"
+  HCF_GATE_SHELLBODY="$(jq -rn --arg c "${HCF_GATE_CMD:-}" "$cmd_defs"'$c | shellbody')"
 fi
+export HCF_GATE_NORM HCF_GATE_SCRIPTS HCF_GATE_SHELLBODY
 
-# A Write to an existing test file replaces it: count only the tests it adds
-# over what the file held at HEAD (or over the previous Write in this run).
-# Resolved here in bash because the baseline needs git.
+# A Write to an existing test file replaces it: count only the tests it adds.
+# The last fallback, used only when the transcript recorded no snapshot of the
+# file from before the Write: what the file held at HEAD.
 baseline_tests() {
   local path="$1" root rel
   root="$(git -C "$(dirname "$path")" rev-parse --show-toplevel 2>/dev/null)" || { echo 0; return; }
@@ -474,10 +491,7 @@ LC_ALL=C awk -F'\t' \
   -v task_file="$task_file" \
   -v task_file_r="$task_file_r" \
   -v project_root="$project_root" \
-  -v req_change="$req_change" \
-  -v gate_cmd="$gate_cmd" \
-  -v gate_scripts="$gate_scripts" \
-  -v gate_shellbody="$gate_shellbody" '
+  -v req_change="$req_change" '
 function lc(s) { return tolower(s) }
 # Undoes the @tsv escaping of jq (\\ \t \n \r).
 function untsv(s,   out, i, c, n) {
@@ -731,7 +745,20 @@ function formatter_explicit(s, w, nw, k,   i, n) {
   return n > 0
 }
 function has_write_words(t) {
-  return (t ~ /(^|[^0-9&>=-])>>?[ \t]*[^ \t&>]/ || t ~ /(^|[ \t;&|(])(tee|touch|cp|mv|ln|install|rsync|dd|truncate|patch)[ \t]/ || t ~ /(sed|perl)[ \t]+(-[^ \t]+[ \t]+)*-i/ || t ~ /git[ \t]+(apply|checkout|restore|stash|reset|clean|switch)/)
+  return (t ~ /(^|[^0-9&>=-])>>?[ \t]*[^ \t&>]/ || t ~ /(^|[ \t;&|(])(tee|touch|cp|mv|ln|install|rsync|dd|truncate|patch|rm|unlink|rmdir)[ \t]/ || t ~ /(sed|perl)[ \t]+(-[^ \t]+[ \t]+)*-i/ || t ~ /git[ \t]+(apply|checkout|restore|stash|reset|clean|switch|rm|mv|commit)/)
+}
+function shq(s,   out, i, c, n) {
+  out = "\047"; n = length(s)
+  for (i = 1; i <= n; i++) { c = substr(s, i, 1); out = out (c == "\047" ? "\047\\\047\047" : c) }
+  return out "\047"
+}
+# Does git ignore path p (asked from directory dir)? Caches, build output and
+# other ignored files are not project source: a worker may delete them from
+# Bash (rm -rf var/cache before a test run).
+function git_ignored(p, dir,   k) {
+  k = dir SUBSEP p
+  if (!(k in IGN)) IGN[k] = (system("git -C " shq(dir) " check-ignore -q -- " shq(p) " >/dev/null 2>&1") == 0)
+  return IGN[k]
 }
 # Non-option words after index k, with redirections (and their targets) removed.
 function plain_args(w, nw, k, out,   i, n) {
@@ -802,6 +829,38 @@ function seg_writes(raw, dir, depth, full,   s, m, w, nw, k, b, a, na, i, j, g, 
     return
   }
   if (b == "dd") { for (i = k + 1; i <= nw; i++) if (w[i] ~ /^of=/) { dd = w[i]; sub(/^of=/, "", dd); add_write(resolve(dd, dir)) } return }
+  # Deleting is a change too, and one revert-task.sh cannot undo. Only files
+  # git ignores may go.
+  if (b ~ /^(rm|unlink|rmdir)$/) {
+    na = plain_args(w, nw, k, a)
+    for (i = 1; i <= na; i++) { m = resolve(a[i], dir); if (!git_ignored(m, dir)) add_write(m) }
+    if (na == 0 && XARGS) add_write(dir "/*")
+    return
+  }
+  if (b == "find") {
+    g = 0
+    for (i = k + 1; i <= nw; i++) if (w[i] == "-delete" || (w[i] ~ /^-(exec|execdir|ok|okdir)$/ && base(w[i + 1]) ~ /^(rm|unlink|rmdir|mv|cp|sed|perl|truncate|touch|tee|sh|bash)$/)) g = 1
+    if (!g) return
+    na = 0
+    for (i = k + 1; i <= nw && w[i] !~ /^[-(!]/; i++) { m = (unquote(w[i]) == ".") ? dir : resolve(w[i], dir); na++; if (!git_ignored(m, dir)) add_write(m "/*") }
+    if (na == 0) add_write(dir "/*")
+    return
+  }
+  if (b == "curl") {
+    for (i = k + 1; i <= nw; i++) {
+      if (w[i] ~ /^(-[A-Za-z]*o|--output)$/ && i < nw) add_write(resolve(w[i + 1], dir))
+      else if (w[i] ~ /^-[A-Za-z]*O[A-Za-z]*$/ || w[i] ~ /^--remote-name/) add_write(dir "/*")
+    }
+    return
+  }
+  if (b == "wget") {
+    if ((" " join_from(w, nw, k + 1) " ") ~ / --spider /) return
+    for (i = k + 1; i <= nw; i++) {
+      if (w[i] ~ /^-[A-Za-z]*O-$/) return
+      if (w[i] ~ /^(-[A-Za-z]*O|--output-document)$/ && i < nw) { if (w[i + 1] != "-") add_write(resolve(w[i + 1], dir)); return }
+    }
+    add_write(dir "/*"); return
+  }
   if (b == "patch") {
     if ((" " join_from(w, nw, k + 1) " ") ~ / (--dry-run|-C|--check) /) return
     for (i = k + 1; i < nw; i++) if (w[i] == "-o" || w[i] == "--output") { add_write(resolve(w[i + 1], dir)); return }
@@ -824,7 +883,15 @@ function seg_writes(raw, dir, depth, full,   s, m, w, nw, k, b, a, na, i, j, g, 
       if (i < nw) add_write(gdir "/*")
       return
     }
-    if (sub_ ~ /^(switch|merge|rebase|cherry-pick|revert|pull|am)$/) { add_write(gdir "/*"); return }
+    if (sub_ == "rm" || sub_ == "mv") {
+      if (opts ~ / (-n|--dry-run) / || (sub_ == "rm" && opts ~ / --cached /)) return
+      g = 0
+      for (j = i + 1; j <= nw; j++) { if (w[j] ~ /^-/ || w[j] ~ /^[0-9]*[<>]/) continue; add_write(resolve(w[j], gdir)); g++ }
+      if (g == 0) add_write(gdir "/*")
+      return
+    }
+    # Only the orchestrator commits, once the whole suite passes.
+    if (sub_ ~ /^(switch|merge|rebase|cherry-pick|revert|pull|am|commit)$/) { add_write(gdir "/*"); return }
     if (sub_ == "stash" && w[i + 1] !~ /^(list|show)$/) { add_write(gdir "/*"); return }
     if (sub_ == "reset" && opts ~ / --(hard|merge|keep) /) { add_write(gdir "/*"); return }
     if (sub_ == "clean" && opts ~ / (-[A-Za-z]*f[A-Za-z]*|--force) / && opts !~ / (-n|--dry-run) /) { add_write(gdir "/*"); return }
@@ -845,7 +912,7 @@ function expand_vars(s, dir,   out, m, name) {
     out = out substr(s, 1, RSTART - 1)
     if (name in SHV) out = out SHV[name]
     else if (name == "PWD") out = out dir
-    else if (name == "HOME" && ENVIRON["HOME"] != "") out = out ENVIRON["HOME"]
+    else if ((name == "HOME" || name == "TMPDIR") && ENVIRON[name] != "") out = out ENVIRON[name]
     else out = out m
     s = substr(s, RSTART + RLENGTH)
   }
@@ -887,7 +954,7 @@ function bash_writes(c, cwd, scripts, shellbody,   n, i, dir, sdir, m, sp, ns, s
     if (sdir == "") sdir = dir
     for (i = 1; i <= ns; i++) if (sp[i] != "") add_write(resolve(sp[i], sdir))
   }
-  if (shellbody == "1") add_write(cwd "/*")
+  if (shellbody != "" && has_write_words(shellbody)) add_write(cwd "/*")
   return NW
 }
 # Index of the requirement a filter names, or 0. An exact name wins; otherwise
@@ -910,17 +977,28 @@ function real_fails(id,   n, ls, i, c, lc_) {
   return c
 }
 # A successful Edit/Write/MultiEdit/NotebookEdit, in transcript order.
-function file_edit(id,   p, nn, wn, k, n) {
+function file_edit(id,   p, nn, wn, k, n, held) {
   p = path[id]
   if (other_checkout(p, cwdof[id]) != "") { violation("R6 file in another checkout of this repository changed (work only in " cwdof[id] "): " p); return }
   if (ignored(p, cwdof[id])) return
-  touched[p] = 1
+  # No test requirements: there is no method to check, only where and how
+  # files change.
+  if (nreq == 0) return
   if (is_test_file(p, cwdof[id])) {
     nn = split(wnames[id], wn, ",")
     for (k = 1; k <= nn; k++) if (wn[k] != "") written[wn[k] + 0] = 1
     n = added[id]
-    if (n ~ /^W/) { n = substr(n, 2) - (p in seen_tests ? seen_tests[p] : base_tests[p]); }
-    if (added[id] ~ /^W/) seen_tests[p] = substr(added[id], 2)
+    if (n ~ /^W/) {
+      # A Write replaces the file: it adds what it holds over what the file
+      # held just before (the recorded snapshot; else what this transcript
+      # has put there so far, over HEAD).
+      held = substr(n, 2) + 0
+      if (orig[id] != "") n = held - orig[id]
+      else if (p in cur_tests) n = held - cur_tests[p]
+      else n = held - (base_tests[p] + edit_delta[p])
+      cur_tests[p] = held
+    } else if (p in cur_tests) cur_tests[p] += n
+    else edit_delta[p] += n
     if (n > 0) { flush_cuts(); new_since_red += n; armed = 0 }
     return
   }
@@ -983,11 +1061,11 @@ $1 == "REAL" { REAL[$2] = $3; next }
 $1 == "CWD" { CWDREAL[$2] = $3; next }
 $1 == "USE" {
   if (!($2 in tool)) useorder[++nuse] = $2
-  tool[$2] = $3; path[$2] = untsv($4); added[$2] = $5; cmd[$2] = untsv($6); cwdof[$2] = untsv($7); scr[$2] = $8; wnames[$2] = $9; rem[$2] = $10; sbody[$2] = $11; rawcmd[$2] = untsv($12)
+  tool[$2] = $3; path[$2] = untsv($4); added[$2] = $5; cmd[$2] = untsv($6); cwdof[$2] = untsv($7); scr[$2] = $8; wnames[$2] = $9; rem[$2] = $10; sbody[$2] = untsv($11); rawcmd[$2] = untsv($12)
   next
 }
 $1 == "RES" {
-  id = $2; err = ($3 == "1"); infra = ($4 == "1"); fails[id] = untsv($6); loads[id] = untsv($7); blocked = ($8 == "1"); resolved[id] = 1
+  id = $2; err = ($3 == "1"); infra = ($4 == "1"); fails[id] = untsv($6); loads[id] = untsv($7); blocked = ($8 == "1"); orig[id] = $9; resolved[id] = 1
   t = tool[id]
   # A Bash write counts whether or not the command errored: only a call the
   # guard refused never ran.
@@ -1000,7 +1078,6 @@ $1 == "RES" {
       if (p == "FORMAT-ALL") continue
       if (other_checkout(p, cwdof[id]) != "") { violation("R6 file in another checkout of this repository changed from Bash (work only in " cwdof[id] "): " p); continue }
       if (ignored(p, cwdof[id])) continue
-      if (p !~ /\/\*$/) touched[p] = 1
       violation("R4 project file changed from Bash (only Edit/Write may change files): " p)
     }
   }
@@ -1047,7 +1124,7 @@ END {
       file_edit(id)
     }
     if (gt == "Bash") {
-      nw = bash_writes(gate_cmd, gcwd, gate_scripts, gate_shellbody)
+      nw = bash_writes(ENVIRON["HCF_GATE_NORM"], gcwd, ENVIRON["HCF_GATE_SCRIPTS"], ENVIRON["HCF_GATE_SHELLBODY"])
     } else { nw = 1; wrote[1] = ENVIRON["HCF_GATE_PATH"] }
     gadd = ENVIRON["HCF_GATE_ADDED"] + 0
     # Only an Edit or MultiEdit can be a removal-only cut-back.
@@ -1062,6 +1139,7 @@ END {
       if (other_checkout(p, gcwd) != "") { print "DENY-CHECKOUT " p; exit 0 }
       if (ignored(p, gcwd)) continue
       if (gt == "Bash") { print "DENY-BASH " p; exit 0 }
+      if (nreq == 0) continue
       if (is_test_file(p, gcwd)) {
         # One new test at a time: run the last one before writing the next.
         if (gadd > 1 || (gadd > 0 && new_since_red > 0)) { print "DENY-BATCH " p; exit 0 }
@@ -1077,9 +1155,14 @@ END {
     }
     print "ALLOW"; exit 0
   }
-  if (mode == "touched") { for (p in touched) print p; exit 0 }
   flush_cuts()
   if (req_change != "") violation(req_change)
+  if (nreq == 0) {
+    for (i = 1; i <= nviol; i++) print "VIOLATION " viol[i]
+    if (nviol > 0) { printf "verify-tdd: FAILED (%d violation(s), 0 warning(s))\n", nviol; exit 1 }
+    printf "verify-tdd: no test requirements in %s; nothing to verify\n", task_file
+    exit 4
+  }
   # Nothing recognised as a test run at all: say how to fix it, not just R1.
   if (nreq > 0 && nruns == 0) violation("R0 no test run was recognised in this transcript. If the project uses a runner HCF does not know, add its command to \"testRunners\" (or a wrapper that runs it to \"commandWrappers\") in .claude/hcf.json")
   for (i = 1; i <= nreq; i++) {
@@ -1107,15 +1190,15 @@ END {
   # pass can subtract tests the file already had; and the symlink-resolved
   # form of every edited path and cwd, so a path reached through a symlink is
   # still recognised as the project's or the plan's.
-  printf '%s\n' "$events" | awk -F'\t' '$1 == "USE" && $3 == "Write" { print $4 }' | sort -u | while IFS= read -r p; do
+  printf '%s\n' "$events" | LC_ALL=C awk -F'\t' '$1 == "USE" && $3 == "Write" { print $4 }' | LC_ALL=C sort -u | while IFS= read -r p; do
     [ -n "$p" ] && printf 'BASE\t%s\t%s\n' "$p" "$(baseline_tests "$p")"
   done
-  { printf '%s\n' "$events" | awk -F'\t' '$1 == "USE" && $4 != "" { print $4 }'
-    [ -n "${HCF_GATE_PATH:-}" ] && printf '%s\n' "$HCF_GATE_PATH"; } | sort -u | while IFS= read -r p; do
+  { printf '%s\n' "$events" | LC_ALL=C awk -F'\t' '$1 == "USE" && $4 != "" { print $4 }'
+    [ -n "${HCF_GATE_PATH:-}" ] && printf '%s\n' "$HCF_GATE_PATH"; } | LC_ALL=C sort -u | while IFS= read -r p; do
     r="$(real_of "$p")"; [ -n "$r" ] && printf 'REAL\t%s\t%s\n' "$p" "$r"
   done
-  { printf '%s\n' "$events" | awk -F'\t' '$1 == "USE" && $7 != "" { print $7 }'
-    [ -n "${HCF_GATE_CWD:-}" ] && printf '%s\n' "$HCF_GATE_CWD"; } | sort -u | while IFS= read -r c; do
+  { printf '%s\n' "$events" | LC_ALL=C awk -F'\t' '$1 == "USE" && $7 != "" { print $7 }'
+    [ -n "${HCF_GATE_CWD:-}" ] && printf '%s\n' "$HCF_GATE_CWD"; } | LC_ALL=C sort -u | while IFS= read -r c; do
     r="$(real_dir "$c")"; [ -n "$r" ] && [ "$r" != "$c" ] && printf 'CWD\t%s\t%s\n' "$c" "$r"
   done
   printf '%s\n' "$events"

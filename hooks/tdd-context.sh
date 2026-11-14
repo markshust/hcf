@@ -25,7 +25,7 @@
 # The task file path from a prompt: the first non-blank line after the
 # "## Task File Path" heading, with backticks, quotes and a list marker removed.
 hcf_task_path_from_prompt() {
-  awk '
+  LC_ALL=C awk '
     f && NF { gsub(/^[[:space:]]*(- )?[`"\047]*|[`"\047]*[[:space:]]*$/, ""); print; exit }
     /^#+[[:space:]]*Task File Path[[:space:]:]*$/ { f = 1 }'
 }
@@ -35,6 +35,14 @@ hcf_task_path_raw() {
   head -c 2000000 "$1" 2>/dev/null | grep -o 'Task File Path[^"]*' | head -n 1 \
     | sed -e 's/\\n/\
 /g' | hcf_task_path_from_prompt
+}
+
+# The prompt the orchestrator wrote: the first user message of a transcript
+# that carries text. Needs jq.
+hcf_first_prompt() {
+  jq -Rrn 'first(inputs | fromjson? | select(.type == "user") | (.message.content
+      | if type == "string" then . elif type == "array" then (map(select(.type == "text") | .text) | join("\n")) else "" end)
+      | select(length > 0)) // ""' "$1" 2>/dev/null
 }
 
 hcf_json_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n\t' '  '; }
@@ -77,10 +85,7 @@ hcf_tdd_context() {
     return 2
   fi
 
-  # The first user message that carries text: the prompt the orchestrator wrote.
-  first_prompt="$(jq -Rrn 'first(inputs | fromjson? | select(.type == "user") | (.message.content
-      | if type == "string" then . elif type == "array" then (map(select(.type == "text") | .text) | join("\n")) else "" end)
-      | select(length > 0)) // ""' "$transcript" 2>/dev/null)"
+  first_prompt="$(hcf_first_prompt "$transcript")"
   HCF_TDD_TASK_FILE="$(printf '%s\n' "$first_prompt" | hcf_task_path_from_prompt)"
   if [ -z "$HCF_TDD_TASK_FILE" ]; then
     [ "$is_worker" = 1 ] || return 1
@@ -94,8 +99,12 @@ hcf_tdd_context() {
 
   # Absolute paths the prompt tells the worker to read IN FULL (testing.md,
   # code-standards.md, CLAUDE.md...), one per line. The guard holds every file
-  # change until each has been opened with the Read tool.
-  HCF_TDD_REQUIRED_READS="$(printf '%s\n' "$first_prompt" | grep 'IN FULL' \
-    | grep -oE '/[^[:space:]`"]+' | sed -E 's/[.,;:)]+$//' | awk '!seen[$0]++')"
+  # change until each has been opened with the Read tool. A path in backticks
+  # is taken whole, so it may hold spaces; a bare one ends at the first blank.
+  HCF_TDD_REQUIRED_READS="$(printf '%s\n' "$first_prompt" | grep 'IN FULL' | LC_ALL=C awk '{
+      line = $0
+      while (match(line, /`\/[^`]+`/)) { print substr(line, RSTART + 1, RLENGTH - 2); line = substr(line, 1, RSTART - 1) " " substr(line, RSTART + RLENGTH) }
+      while (match(line, /\/[^ \t`"]+/)) { p = substr(line, RSTART, RLENGTH); sub(/[.,;:)]+$/, "", p); print p; line = substr(line, RSTART + RLENGTH) }
+    }' | LC_ALL=C awk '!seen[$0]++')"
   return 0
 }

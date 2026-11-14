@@ -274,18 +274,196 @@ once it does, the gates open automatically.
 Separate from the 8 agent hook points above, HCF registers Claude Code hooks in
 `hooks/hooks.json` that check every `tdd-worker` while it works. They need no
 enrollment and do nothing outside a `tdd-worker` (the main session and every
-other agent are untouched):
+other agent are untouched). This section is the reference for them; the README
+only summarises it.
 
 | Claude Code hook | Script | Does |
 |---|---|---|
-| `PreToolUse` (`Edit\|Write\|MultiEdit\|NotebookEdit\|Bash`) | `tdd-guard.sh` | Refuses a change that would break the TDD method right now (see the README's [TDD Enforcement](README.md#tdd-enforcement)), with a reason telling the worker what to do instead. A call it cannot check (the verifier errors) is refused, not allowed. Each file change it allows is appended to `<plan>/.tdd/<task file name>.<agent id>.calls`, which it reads back with the transcript, since the transcript can lag behind tools streamed in one message |
-| `SubagentStop` | `tdd-subagent-stop.sh` | Runs `verify-tdd.sh` on the worker's transcript and writes `<plan>/.tdd/<task file name>.verdict` (e.g. `.tdd/001-foo.md.verdict`, with a `transcript:` line naming the transcript it judged); a `FAILED` worker is stopped once more and told to report `TASK_FAILED` |
+| `PreToolUse` (`Edit\|Write\|MultiEdit\|NotebookEdit\|Bash`) | `tdd-guard.sh` | Refuses a call that would break the TDD method right now, with a reason telling the worker what to do instead |
+| `SubagentStop` | `tdd-subagent-stop.sh` | Runs `verify-tdd.sh` on the worker's whole transcript and writes the verdict that `plan-orchestrate` Step 6 reads |
 
-`plan-orchestrate` Step 6 reads the verdict before accepting a task, and
-rejects with `revert-task.sh`. A worker is recognised by its agent type
-(`*tdd-worker`), or, when Claude Code reports none, by the `## Task File Path`
-heading in its prompt. Inside a worker the hooks fail closed: when its context
-cannot be established (`jq` missing, an unreadable transcript, no or an
-unreadable task file), the guard refuses every file change and the stop hook
-writes an `ERROR` verdict where it can and tells the worker to end with
-`TASK_FAILED: TDD hooks could not run — <why>`.
+Both call `verify-tdd.sh`, so the guard and the verifier judge by the same
+rules. `revert-task.sh` undoes a rejected worker's changes. They need `jq`
+(transcripts) and `python3` (revert).
+
+### Who is a worker
+
+An agent whose type ends in `tdd-worker` (`hcf:tdd-worker`, or a project-local
+override), or, when Claude Code reports no agent type, a subagent whose first
+prompt has a `## Task File Path` heading.
+
+### What the guard refuses
+
+- **A production change with no failing test.** A production file can change
+  only after a test run *filtered to the current requirement* has failed.
+  Adding a new test locks production again until that test has failed.
+- **Batches of tests.** A second new test before the last one has been run, or
+  more than one new test in a single edit.
+- **Project files changed from Bash.** Files change only through
+  Edit/Write/MultiEdit, so every change is recorded and can be checked and
+  reverted. Refused: redirects (including `cat <<EOF > file`), `tee`,
+  `sed -i`, `cp`/`mv`/`ln`/`install`/`rsync`/`touch`/`truncate`/`dd of=`,
+  `patch`, `curl -o`/`wget`, code generators such as `artisan make:`,
+  `sh -c`/`bash -c`/`eval` or a script piped into a shell that does any of
+  these, and interpreter scripts that write, delete or rename files. This
+  includes the task file: checkboxes are ticked with Edit.
+- **Deletions, renames and commits.** `rm`, `unlink`, `rmdir`, `find -delete`,
+  `git rm`, `git mv`, and `git commit` along with every other git command that
+  changes the working tree (`apply`, `checkout`, `restore`, `stash`, `switch`,
+  `reset --hard`, `clean -f`, `merge`, `rebase`, ...). A deletion cannot be
+  reverted from the transcript, and only the orchestrator commits. Files git
+  ignores (caches, build output) and paths outside the repository may be
+  deleted. A worker that needs a project file gone names it in the task file's
+  Implementation Notes, and the orchestrator removes it once the task is
+  accepted.
+- **Changes to another checkout** of the same repository (the main worktree or
+  another `git worktree`). Paths outside the repository, such as `/tmp`, stay
+  allowed.
+- **Formatter runs without an explicit file list**, which would rewrite other
+  tasks' files.
+- **Edits that change the task's requirements**: removing or renaming a
+  requirement line, or labelling one `(guard)`.
+- **Any file change before the rules are read.** Every file the prompt names on
+  an `IN FULL` line (an absolute path, in backticks) must have been opened with
+  the Read tool first; only the task file is exempt.
+
+### What counts as red
+
+A test run is a command whose *executed* program is a test runner, after
+wrappers such as `docker compose exec <service>`, `npx`, `python -m`, `env` or
+`sh -c`; never a runner named in a comment or as an argument to
+`echo`/`ls`/`grep`. Runners are recognised by name (Pest, PHPUnit, Jest,
+Vitest, pytest, RSpec, Mocha, `go test`, `cargo test`, `npm`/`yarn`/`pnpm`/`bun
+test`, `composer`/`mix`/`artisan test`, and more) or listed in
+`.claude/hcf.json` (see the README's
+[Test Runners](README.md#test-runners)).
+
+A run is red for a requirement only when it is filtered to that requirement
+and its output shows a test failure: a failing-test line as Pest, PHPUnit,
+Vitest, Jest, pytest, Go, Rust or RSpec print it, a failure count
+(`Tests: 1 failed`, so output trimmed with `tail` still counts), an assertion
+failure, or a compile or collection failure. Such a line counts only at the
+start of an output line (a passing test named "…FAILED…" is not a failure) and
+never when the command printed it itself (`echo "FAILED …"`). Infrastructure
+errors (Docker or a database unreachable, command not found, no tests found,
+out of memory, a parse or syntax error) are never red.
+
+Names are compared normalised, so `it creates a user`, `test_creates_a_user`,
+`testCreatesAUser` and `TestCreatesAUser` match. A run only speaks for a
+requirement whose test this worker has written, under that name.
+
+### Requirements come from the prompt
+
+The requirement list (names and `(guard)` labels) is read from the
+`## Your Task` section of the worker's first prompt, where `plan-orchestrate`
+pastes the task file, so a worker cannot change what it is held to. Every
+requirement there counts, ticked or not. Removing or renaming one in the task
+file, or labelling one `(guard)`, is a violation; a requirement the worker adds
+is verified like the rest. Only when the prompt has no checklist is the task
+file read instead.
+
+A requirement labelled `(guard)` (by `plan-create`, for behaviour an earlier
+requirement in the same task already delivers) only has to be run on its own;
+it may pass on the first run.
+
+### First-run passes are cut back
+
+When any other test passes on its first filtered run, some production code
+already delivers it. The worker **cuts it back**: until the pass is answered
+the guard allows only removal-only Edits to production files (the edit's new
+text keeps some of the old text's tokens in order and adds none), and once the
+test fails on a filtered run the code is rebuilt in GREEN. The verifier counts
+that as red before green; a cut-back not followed by a failing run of that
+requirement (before any other production change or new test) is a violation.
+The worker may instead fix a wrong test.
+
+Only behaviour that **no production code** delivers (a language or framework
+guarantee) may be recorded in the task file as
+`PASSED-FIRST: <requirement> — no-code: <why>`, which gives a `REVIEW` verdict
+for the orchestrator to check. A `PASSED-FIRST` line without `no-code:` is a
+violation.
+
+### Tasks without test requirements
+
+A task whose checklist has no test names (docs, config) has no method to
+check, so production files may be edited freely with Edit/Write and the
+verdict is `NONE`. Everything else still applies: Bash writes, deletions,
+other checkouts and bare formatter runs are refused, and reported as
+violations (`FAILED`) if one got through.
+
+### Verdicts
+
+When a worker stops, the stop hook writes the verdict's first line:
+
+| Verdict | Meaning |
+|---|---|
+| `OK` | every requirement went red before green, one at a time |
+| `REVIEW` | no violations, but a `PASSED-FIRST … no-code:` claim needs checking |
+| `FAILED` | the method was not followed; the violations follow, one per line. With an `unfinished: <n> requirement(s) not attempted` line, the only violations are requirements never started, and the orchestrator resumes the same worker instead of reverting |
+| `NONE` | the task has no test requirements, so the method was not checked |
+| `ERROR` | the check could not run; an `error:` line says why |
+
+A `FAILED` or `ERROR` worker is stopped once more and told to end with
+`TASK_FAILED`; a clean one whose last line is neither `TASK_COMPLETE` nor
+`TASK_FAILED: <reason>` is asked once for it.
+
+### Records
+
+All under `<plan>/.tdd/`, named after the task file including its `.md`. The
+plans directory is never committed, so neither are these.
+
+| File | Written by | Holds |
+|---|---|---|
+| `001-foo.md.verdict` | stop hook | the verdict, a `transcript:` line naming the transcript it judged, then the verifier's report |
+| `001-foo.md.transcript` | guard, on each file change it allows | the worker's transcript path, so an interrupted worker (no stop hook, no verdict) can still be reverted |
+| `001-foo.md.<agent id>.calls` | guard | each file change it allowed, as transcript lines. The transcript can lag behind tools streamed in one message, so the guard reads these back with it |
+
+### Exact revert
+
+`revert-task.sh <task file> <transcript>` undoes exactly one worker's file
+changes, from the before-and-after content Claude Code records with each
+Edit/Write: it deletes files the worker created and restores the others to
+their content from before its first change. Earlier tasks' changes to the same
+files survive, and so do changes a parallel task made afterwards (the worker's
+own edits are undone around them, or the file is left untouched and reported,
+exit 1). `--dry-run` lists what it would do. `git checkout` is never used for
+this: it would also discard earlier tasks' uncommitted work.
+
+### Fresh workers start clean
+
+The verifier judges one worker's transcript against every requirement in its
+prompt. Work an earlier worker did is invisible to it, so `plan-orchestrate`
+never hands a partly done task to a fresh worker: before a retry, and for a
+task an interrupted run left `in_progress`, it reverts the earlier worker's
+changes and resets the task file (or blocks the task when it cannot). Only the
+*same* worker, resumed in the same session, continues an unfinished task.
+
+### What is a test file
+
+By its path relative to the project: under `tests/`, `test/`, `spec/`,
+`specs/` or `__tests__/`, or named `FooTest.php`, `foo.test.ts`,
+`foo.spec.js`, `foo_test.go`, `foo_spec.rb`, `FooSpec.rb` or `test_foo.py` (a
+file named just `Spec.php` or `Test.php` is production code). Markdown, the
+plan directory and paths outside the project are ignored. Every other file is
+production.
+
+**Limit:** tests written inside a production file (Rust's inline
+`#[cfg(test)] mod tests`, Python doctests) are not recognised: the file is
+production, so the test cannot be added before a failing run exists. Put such
+tests in a separate test file (`tests/` for Rust).
+
+### Fails closed
+
+Inside a worker the hooks never allow what they cannot check. If the guard
+cannot judge a call (the verifier errors), it refuses the call. If a worker's
+context cannot be established at all (`jq` missing, an unreadable transcript,
+no or an unreadable task file), the guard refuses every file change and the
+stop hook writes an `ERROR` verdict where it can and tells the worker to end
+with `TASK_FAILED: TDD hooks could not run — <why>`.
+
+### Debugging
+
+Set `HCF_TDD_PROBE_LOG=/path/to/file` in the environment Claude Code runs in
+and both hooks append the raw JSON input of every call to that file.
+`verify-tdd.sh <task file> <transcript>` can be run by hand on any worker
+transcript; its header documents the rules (R1 to R6) in full.

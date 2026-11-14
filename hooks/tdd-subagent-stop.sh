@@ -105,7 +105,7 @@ elif [ "$stop_active" != "true" ]; then
   # A clean verdict still needs the worker's own terminal line: the
   # orchestrator reads it, and a missing one leaves it guessing.
   last_line="$(jq -R -r 'fromjson? | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' \
-    "$HCF_TDD_TRANSCRIPT" 2>/dev/null | awk 'NF { last = $0 } END { print last }')"
+    "$HCF_TDD_TRANSCRIPT" 2>/dev/null | LC_ALL=C awk 'NF { last = $0 } END { print last }')"
   last_line="$(printf '%s' "$last_line" | sed -E 's/^[[:space:]`*]+|[[:space:]`*]+$//g')"
   case "$last_line" in
     TASK_COMPLETE|TASK_FAILED:*) ;;

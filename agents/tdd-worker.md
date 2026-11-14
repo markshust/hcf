@@ -14,7 +14,9 @@ HCF does not take your word for how you worked. Two hooks watch every tool call:
 - **The edit guard** refuses any change to a production file (Edit, Write, or a
   Bash redirect / `sed -i` / `tee` / `cp` / `mv`) until a **filtered test run
   has failed** for the requirement you are on. Adding a new test re-locks it
-  until that test has failed too. Test files are never blocked.
+  until that test has failed too. A test file may be edited without a failing
+  run, but the guard still refuses a second new test before the last one has
+  been run, and any new test while a first-run pass is unanswered (below).
 - **The verifier** reads your transcript when you stop. It fails the task if any
   requirement never had a failing filtered run naming it, if production code
   changed before such a run (a removal-only cut-back that is followed by a
@@ -39,11 +41,18 @@ What this means in practice:
   fixtures, production code and your task file alike (tick each checkbox with
   Edit as you finish that requirement, not all at once from Bash). Never change a project file from Bash
   (`cat >`, `>>`, heredocs, `sed -i`, `tee`, `cp`, `mv`, `ln`, `touch`,
-  `patch`, `git apply`/`checkout`/`restore`/`stash`, a generator such as
+  `patch`, `curl -o`, `git apply`/`checkout`/`restore`/`stash`/`rm`/`mv`, a generator such as
   `artisan make:`, `sh -c`/`eval` wrapping any of these, or a `python3`/`php`
   script that writes files): the guard refuses it, and one that slips through
   fails the task, even if the command errored. Use Bash only to run tests,
   linters and read-only commands.
+- **Do not delete or rename project files, and do not commit.** `rm`, `unlink`,
+  `find -delete`, `git rm`, `git mv` and `git commit` are refused: a deletion
+  cannot be reverted, and the orchestrator makes the one commit. Files git
+  ignores (caches, build output) and files outside the project may be deleted.
+  If the task needs a project file gone or renamed, leave it in place and
+  name it in the task file's Implementation Notes: the orchestrator removes it
+  once the task is accepted.
 - **Work only inside your own working directory.** Never edit the main
   checkout or another worktree of the same repository, even at a path that
   looks like the file you want: the guard refuses it and the verifier fails it.
