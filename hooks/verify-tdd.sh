@@ -831,13 +831,52 @@ function seg_writes(raw, dir, depth, full,   s, m, w, nw, k, b, a, na, i, j, g, 
     return
   }
 }
+# Shell variables a command assigns for itself, so a write through one
+# ("S=/tmp/x; cat > $S/notes") is judged by where it points. Shell state never
+# survives between Bash calls, so a variable is either assigned earlier in the
+# same command or comes from the environment; HOME is taken from it and PWD is
+# the directory the call ran in. Anything else stays unexpanded, so a write through it
+# is still reported (over-report rather than miss).
+function expand_vars(s, dir,   out, m, name) {
+  out = ""
+  while (match(s, /\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*/)) {
+    m = substr(s, RSTART, RLENGTH)
+    name = m; gsub(/^\$\{?|\}$/, "", name)
+    out = out substr(s, 1, RSTART - 1)
+    if (name in SHV) out = out SHV[name]
+    else if (name == "PWD") out = out dir
+    else if (name == "HOME" && ENVIRON["HOME"] != "") out = out ENVIRON["HOME"]
+    else out = out m
+    s = substr(s, RSTART + RLENGTH)
+  }
+  return out s
+}
+# A segment that only assigns variables (optionally after export) records them
+# in SHV and returns 1. "VAR=x cmd" sets VAR for cmd alone and records nothing.
+function set_vars(seg,   t, w, nw, i, k, name, val) {
+  t = seg; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+  if (t == "") return 0
+  nw = split_words(t, w); if (nw == 0) return 0
+  i = 1; if (w[1] == "export") i = 2
+  if (i > nw) return 0
+  for (k = i; k <= nw; k++) if (w[k] !~ /^[A-Za-z_][A-Za-z0-9_]*=/) return 0
+  for (k = i; k <= nw; k++) {
+    name = w[k]; sub(/=.*/, "", name)
+    val = w[k]; sub(/^[^=]*=/, "", val)
+    SHV[name] = unquote(val)
+  }
+  return 1
+}
 # Files a Bash command writes, as absolute paths in wrote[1..NW] (or
 # "<dir>/*" when it may write anywhere under dir, or FORMAT-ALL). Best
 # effort, not a parser: it over-reports rather than miss a write.
 function bash_writes(c, cwd, scripts, shellbody,   n, i, dir, sdir, m, sp, ns, segs) {
   NW = 0; dir = cwd; sdir = ""
+  split("", SHV)
   n = split_cmd(c, segs)
   for (i = 1; i <= n; i++) {
+    segs[i] = expand_vars(segs[i], dir)
+    if (set_vars(segs[i])) continue
     # A script resolves its relative paths against the directory it ran in.
     if (sdir == "" && segs[i] ~ /(^|[^A-Za-z])(python3?|php|node|ruby|perl)([^A-Za-z]|$)/) sdir = dir
     if (match(segs[i], /^[ \t]*cd[ \t]+[^ \t]+/)) { m = substr(segs[i], RSTART, RLENGTH); sub(/^[ \t]*cd[ \t]+/, "", m); dir = resolve(m, dir); continue }

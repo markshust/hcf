@@ -85,6 +85,40 @@ assert_exit "it fails a production file written from Bash" 1 "$(verify "$T")"
 assert_contains "it reports the Bash write" "$(cat "$VPROJ/out")" "R4 project file changed from Bash"
 assert_not_contains "it ignores arrows inside a heredoc body" "$(cat "$VPROJ/out")" "2;"
 
+# A write through a variable is judged by where the variable points. The same
+# command assigns it (shell state never survives between Bash calls).
+OUTSIDE="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/hcf-outside.XXXXXX")" && pwd -P)"
+bash_use() { tx_use Bash "$(jq -cn --arg c "$1" '{command:$c}')"; tx_res false ""; }
+T="$VPROJ/var-outside.jsonl"
+{ bash_use "S=$OUTSIDE; mkdir -p \$S && cat > \$S/notes.txt <<'E'
+scratch
+E"
+  add_test "adds two numbers"; red "adds two numbers"; edit_src; green
+  add_test "subtracts two numbers"; red "subtracts two"; edit_src; green; } > "$T"
+assert_exit "it ignores a write through a variable the same command points outside the project" 0 "$(verify "$T")"
+
+T="$VPROJ/var-export.jsonl"
+{ bash_use "export S=\"$OUTSIDE\"; printf x > \${S}/a.txt"
+  add_test "adds two numbers"; red "adds two numbers"; edit_src; green
+  add_test "subtracts two numbers"; red "subtracts two"; edit_src; green; } > "$T"
+assert_exit "it expands an exported variable written as \${VAR}" 0 "$(verify "$T")"
+
+T="$VPROJ/var-inside.jsonl"
+{ bash_use "D=src; cat > \$D/Calc.php <<'E'
+<?php return 1;
+E"
+  add_test "adds two numbers"; red "adds two numbers"; green; } > "$T"
+assert_exit "it still fails a production file written through a variable that points into the project" 1 "$(verify "$T")"
+assert_contains "it reports the expanded path of that write" "$(cat "$VPROJ/out")" "R4 project file changed from Bash (only Edit/Write may change files): $VPROJ/src/Calc.php"
+
+T="$VPROJ/var-unset.jsonl"
+{ bash_use "cat > \$NOT_SET/Calc.php <<'E'
+<?php return 1;
+E"
+  add_test "adds two numbers"; red "adds two numbers"; green; } > "$T"
+assert_exit "it still fails a write through a variable the command never assigns" 1 "$(verify "$T")"
+rm -rf "$OUTSIDE"
+
 # A (guard) requirement may pass on arrival, but must still be run on its own.
 cp "$TASK" "$TASK.bak"
 sed -i.tmp 's/`it subtracts two numbers`/`it subtracts two numbers` (guard)/' "$TASK"; rm -f "$TASK.tmp"
