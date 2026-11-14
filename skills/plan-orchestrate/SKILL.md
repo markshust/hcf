@@ -55,13 +55,13 @@ If the current branch is not `feature/{plan-name}`:
 
 ## Project Configuration
 
-<testing>
-@.claude/testing.md
-</testing>
+**Read `.claude/testing.md` and `.claude/code-standards.md` in full now**, with
+the Read tool. Do not rely on them being expanded into this skill: an `@path`
+include is not expanded when a skill loads, so the text would never arrive. You
+need `testing.md`'s TDD Workflow Commands to run the suite in Step 4a.
 
-<code-standards>
-@.claude/code-standards.md
-</code-standards>
+Below, `<testing>` and `<code-standards>` mean those two files, referred to by
+their absolute paths (resolved from the project root).
 
 ## Execution Algorithm
 
@@ -242,30 +242,35 @@ On a normal (exit 0, non-empty) result, spawn each agent per its **`mode` field*
 ### Spawning hook agents
 
 Hook agents are spawned with the Task tool using `subagent_type="{agent-name}"`.
-The orchestrator only has `<testing>` and `<code-standards>` in context (see
-[Project Configuration](#project-configuration)) — it does NOT have
-`<architecture>`. Pass each hook agent the project context it needs verbatim:
+Use the name exactly as the discovery script printed it. A plugin's agents are
+namespaced, so when no subagent type with the bare name exists, use
+`hcf:{agent-name}`; a project-local agent of the same name (the override) keeps
+the bare name and wins.
 
-> **CRITICAL: Pass the COMPLETE, VERBATIM content of the `<code-standards>` and
-> `<testing>` tags above. Do NOT summarize, condense, or paraphrase. The full
-> documents contain nuanced rules that are lost when summarized. Copy-paste the
-> entire content between the tags.**
+Pass each hook agent the project context it needs:
+
+> **CRITICAL: point the agent at the COMPLETE `<code-standards>` and `<testing>`
+> files by absolute path, and require it to read both IN FULL before it starts.
+> Never summarize or paraphrase them in the prompt: the full documents contain
+> nuanced rules that are lost when summarized. Subagents have the Read tool, so
+> a path plus that requirement delivers the whole text without pasting tens of
+> kilobytes into every prompt.**
 
 For a **`batch`** agent, send one prompt per batch:
 
 ```markdown
 ## Code Standards
-{paste the COMPLETE content of <code-standards> verbatim — do NOT summarize}
+Read {absolute path of <code-standards>} IN FULL before starting; it is authoritative.
 
 ## Testing Standards
-{paste the COMPLETE content of <testing> verbatim — do NOT summarize}
+Read {absolute path of <testing>} IN FULL before starting; it is authoritative.
 
 ## Files to Review
 {list of files in this batch, one per line}
 ```
 
 For a **`single`** agent, send one prompt covering the whole plan, including the
-plan name, the changed-files list, and `<testing>` + `<code-standards>` verbatim.
+plan name, the changed-files list, and the same two read-in-full instructions.
 
 > If a hook agent needs project architecture, that is out of scope for this
 > orchestrator — it does not load `<architecture>`. Do NOT fabricate an
@@ -412,11 +417,18 @@ also what makes drift (exit 4) surface promptly rather than at the end.
 **Mark the batch.** Set each task's status to `in_progress` in its task file and
 in the task table in `_plan.md`, and add it to the running set.
 
+**Clear stale TDD records.** For each task, delete any verdict and guard
+sidecar left by an earlier worker on the same task, so Step 6 can never read
+an old one: `rm -f "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md.verdict" "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md".*.calls`
+(the file name includes `.md`: for `001-foo.md` these are `.tdd/001-foo.md.verdict`
+and `.tdd/001-foo.md.<agent-id>.calls`). Skip this when resuming an unfinished
+task with SendMessage (Step 6): the same worker keeps its records.
+
 **Launch.** Spawn one `tdd-worker` per task as a **background** subagent, all in
 a single message, and do **not** wait for them here:
 
 ```
-Use the Task tool with subagent_type="tdd-worker" and run_in_background=true for EACH task in the batch.
+Use the Task tool with subagent_type="tdd-worker" (or "hcf:tdd-worker" when the bare name is not available) and run_in_background=true for EACH task in the batch.
 All Task tool calls for the batch go in a SINGLE message.
 ```
 
@@ -437,22 +449,39 @@ Batch {B} launched: tasks {list} (running {len(running)})
 
 **Worker Prompt (pass to each tdd-worker):**
 
-> **CRITICAL: Pass the COMPLETE, VERBATIM content of the `<testing>` and `<code-standards>` tags above.
-> Do NOT summarize. Subagents have no access to CLAUDE.md or project files beyond what you provide.**
+> **CRITICAL: require the worker to read `<testing>` and `<code-standards>` IN FULL
+> by absolute path before writing any code. Do NOT summarize them in the prompt.
+> Subagents do not inherit CLAUDE.md, so name it too.**
 
 ```markdown
 ## Task File Path
 {the concrete resolved path, e.g. $PLANS_DIR/{plan-name}/{task-file}.md}
 
 ## Project Testing Configuration
-{paste the COMPLETE content of <testing> verbatim — do NOT summarize}
+Read {absolute path of <testing>} IN FULL before writing any code; follow every rule in it.
 
 ## Code Standards
-{paste the COMPLETE content of <code-standards> verbatim — do NOT summarize}
+Read {absolute path of <code-standards>} and {absolute path of CLAUDE.md} IN FULL before writing any code.
+
+## Parallel Run
+{only when <testing> asks for per-worker resources (e.g. one test database per
+parallel worker): the ones this worker owns, created as <testing> says before
+the batch launches, and which other tasks share the working tree with it}
 
 ## Your Task
-{contents of the task file}
+{the task file's contents, pasted verbatim: every line, including the full requirements checklist}
 ```
+
+**Paste the task file verbatim under `## Your Task`** — never a summary or a
+pointer to the file. The TDD hooks take the requirement list (names and
+`(guard)` labels) from this section of the worker's first prompt, which the
+worker cannot edit, and flag any later change to the task file's list as a
+violation. If the section has no requirement checklist, they fall back to the
+task file, which the worker can edit, and that protection is lost.
+
+Keep the words `IN FULL` on every line that names a file to read: the edit
+guard reads those paths from the prompt and refuses every file change but the
+task file until the worker has opened each one with the Read tool.
 
 The tdd-worker agent already has all TDD methodology and rules. The prompt needs the project-specific configuration and task details since subagents do not inherit CLAUDE.md context.
 
@@ -465,7 +494,74 @@ background subagent completes. Do not poll, do not sleep, and do not wait for
 the rest of its batch. Process that one result, remove the task from the
 running set, and clear `at_limit`:
 
-**On TASK_COMPLETE:**
+**Verify TDD first — for every result, TASK_COMPLETE or not.** A worker's own
+summary is not evidence of how it worked; its transcript is. The `SubagentStop`
+hook (`hooks/tdd-subagent-stop.sh`) has already checked the transcript and
+written the verdict to `$PLANS_DIR/{plan-name}/.tdd/{task-file}.md.verdict`,
+named after the task file **including** its `.md` (for `001-foo.md`:
+`.tdd/001-foo.md.verdict`).
+
+**Check it is this worker's verdict before trusting it.** Its second line is
+`transcript: <path>`. That path must be this worker's transcript: the
+`output_file` the spawn result named, or the transcript file named after its
+agent id (`.../subagents/agent-<agent id>.jsonl`). If it names another
+transcript, or there is no verdict file, treat it as **no verdict file** below.
+Then read its first line:
+
+| Verdict | Meaning | Action |
+|---------|---------|--------|
+| `OK` | every requirement went red before green, one at a time | accept the result as reported |
+| `REVIEW` | no violations, but a requirement passed on its first run and is justified as `PASSED-FIRST: <name> — no-code: <reason>` (rare: a first-run pass is normally answered by a cut-back, which gives `OK`) | confirm the claim: **no production code** delivers the behaviour (a language or framework guarantee, nothing a cut-back could delete). If any production code, the worker's own or an earlier task's, makes the test pass, the worker should have cut it back: treat the task as `FAILED` |
+| `NONE` | the task has no test requirements (docs, config), so nothing was verified | review the worker's output yourself (it is not TDD-checked: docs examples, for instance, are not run), then accept as reported |
+| `FAILED` with an `unfinished: <n> requirement(s) not attempted` line | the worker stopped before some requirements (no test written for them) and everything it did is clean: every violation is `R1 … not attempted (no test written)`. It reports `TASK_FAILED: unfinished — <n> requirement(s) not attempted` | **resume, do not revert** — see below |
+| `FAILED` (no `unfinished:` line) | the TDD method was not followed | **reject**, whatever the worker reported — see below |
+| `ERROR` or **no verdict file** (or one whose `transcript:` line names another worker) | the check could not run (an `ERROR` verdict's `error:` line says why; the worker was told to end with `TASK_FAILED: TDD hooks could not run — <why>`) | re-run it by hand: `"{skill-base-dir}/../../hooks/verify-tdd.sh" "<task file>" "<worker transcript>"` (the transcript is the `output_file` the spawn result named). If it still cannot run, **stop the run** and report it — never accept an unverified task |
+
+**Resuming an unfinished task.** Its finished requirements were built
+test-first, so keep them: do not run `revert-task.sh`, do not reset the task
+file, and do not count it as a retry.
+1. Send the **same** worker on with SendMessage (its agent id from the spawn
+   result): "Continue the task: implement the unchecked requirements, one at a
+   time, test first." Its transcript keeps growing, and the verdict at its next
+   stop covers the whole transcript, both phases.
+2. Never spawn a fresh worker to finish it: a new transcript holds no tests for
+   the finished requirements, so they would all be reported "not attempted".
+   If the worker cannot be resumed (its session is gone), handle the task as a
+   rejected `FAILED` task below instead.
+3. A requirement left deliberately for later (e.g. one that needs a live
+   service) stays unfinished: report it to the user, keep the task `pending`,
+   and resume the worker when it can continue.
+
+**Rejecting a FAILED task.** The work is discarded, not repaired: code that was
+not built test-first is not kept, even if its tests pass.
+1. Revert exactly what the worker changed, and nothing else:
+   `"{skill-base-dir}/../../hooks/revert-task.sh" "<task file>" "<worker transcript>"`
+   It restores each file to its content from just before the worker's first
+   change (recorded in the transcript) and deletes files the worker created.
+   If another worker changed a file after this one (parallel tasks share the
+   worktree), it undoes only this worker's own edits instead, keeping the
+   other worker's; if that cannot be done exactly it leaves the file untouched
+   and exits 1. Then fix that file by hand before retrying.
+   Run it with `--dry-run` first to see the list:
+   `"{skill-base-dir}/../../hooks/revert-task.sh" --dry-run "<task file>" "<worker transcript>"`
+   (`--dry-run` may come first or last). **Never use `git checkout`
+   for this**: a file an earlier accepted task already changed would lose that
+   task's work too.
+2. Run the package's test suite: it must be back to its state before the task.
+3. Reset the task file: uncheck its requirements, clear its Implementation
+   Notes, delete its verdict file and its `.tdd/<task file name>.*.calls` sidecars.
+4. Handle it as **TASK_FAILED** below with the reason `TDD verification failed`
+   and the verdict's violation lines in the log.
+5. **Report it to the user at once**, with the violations. Do not let it pass
+   silently as an ordinary retry.
+
+**On TASK_COMPLETE (verdict OK, or REVIEW accepted):**
+
+The verdict and the task file decide, not the worker's wording. The stop hook
+already asked a clean worker once for its `TASK_COMPLETE` line; if it still
+ended without one, accept the task when the verdict is `OK` (or an accepted
+`REVIEW`) and every requirement is checked.
+
 1. Verify all requirements are checked in task file
 2. Set task status to `completed`
 3. Update the task table in `_plan.md`

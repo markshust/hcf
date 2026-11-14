@@ -268,3 +268,24 @@ always authoritative. A leftover `.claude/pipeline.md` is flagged by the
 while the file exists, regardless of how they are invoked. `/project-update` is
 left runnable — it is the only component that migrates or deletes the file, and
 once it does, the gates open automatically.
+
+## TDD enforcement hooks (not agent hook points)
+
+Separate from the 8 agent hook points above, HCF registers Claude Code hooks in
+`hooks/hooks.json` that check every `tdd-worker` while it works. They need no
+enrollment and do nothing outside a `tdd-worker` (the main session and every
+other agent are untouched):
+
+| Claude Code hook | Script | Does |
+|---|---|---|
+| `PreToolUse` (`Edit\|Write\|MultiEdit\|NotebookEdit\|Bash`) | `tdd-guard.sh` | Refuses a change that would break the TDD method right now (see the README's [TDD Enforcement](README.md#tdd-enforcement)), with a reason telling the worker what to do instead. A call it cannot check (the verifier errors) is refused, not allowed. Each file change it allows is appended to `<plan>/.tdd/<task file name>.<agent id>.calls`, which it reads back with the transcript, since the transcript can lag behind tools streamed in one message |
+| `SubagentStop` | `tdd-subagent-stop.sh` | Runs `verify-tdd.sh` on the worker's transcript and writes `<plan>/.tdd/<task file name>.verdict` (e.g. `.tdd/001-foo.md.verdict`, with a `transcript:` line naming the transcript it judged); a `FAILED` worker is stopped once more and told to report `TASK_FAILED` |
+
+`plan-orchestrate` Step 6 reads the verdict before accepting a task, and
+rejects with `revert-task.sh`. A worker is recognised by its agent type
+(`*tdd-worker`), or, when Claude Code reports none, by the `## Task File Path`
+heading in its prompt. Inside a worker the hooks fail closed: when its context
+cannot be established (`jq` missing, an unreadable transcript, no or an
+unreadable task file), the guard refuses every file change and the stop hook
+writes an `ERROR` verdict where it can and tells the worker to end with
+`TASK_FAILED: TDD hooks could not run — <why>`.

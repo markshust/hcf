@@ -23,6 +23,16 @@
             "args": []
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/tdd-guard.sh",
+            "args": []
+          }
+        ]
       }
     ],
     "UserPromptExpansion": [
@@ -32,6 +42,17 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/gate-command.sh",
+            "args": []
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/tdd-subagent-stop.sh",
             "args": []
           }
         ]

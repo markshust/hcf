@@ -420,6 +420,30 @@ Requirements MUST be written as test descriptions. They should:
 - Good: `it stores user in database` + `it returns created user`
 - Bad: `it stores user in database and returns it`
 
+**Label requirements that should already pass with `(guard)`:**
+
+TDD expects each test to fail before code is written, and HCF verifies that
+from the worker's transcript. Some requirements are worth a test but will
+almost certainly pass on arrival, because an earlier requirement in the same
+task already produces the behavior: a second input that reaches the same
+default, a second entry point that shares the same code path, a regression or
+edge-case check. Keep those as separate requirements (coverage and atomicity
+matter more than a shorter list) and label them right after the name:
+
+```markdown
+- [ ] `it defaults arguments to an empty array when module.php is missing`
+- [ ] `it defaults arguments to an empty array when module.php has no arguments key` (guard)
+```
+
+A `(guard)` requirement only has to be run on its own (a filtered run naming
+it); it may pass on the first run without a justification. Any unlabelled
+requirement that passes on its first run must be cut back by the worker
+(the code that makes it pass is deleted until the test fails, then rebuilt),
+because that usually means a worker over-built an earlier step. So label sparingly: only
+when an earlier requirement in this task clearly delivers the behavior. Never
+label a requirement whose behavior is new. Do not merge such requirements to
+avoid the label; that loses coverage.
+
 ## Task Examples
 
 ### Example: User Model Task
