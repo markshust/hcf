@@ -296,11 +296,15 @@ HCF does not take a worker's word for how it worked. Every `tdd-worker` is
 checked mechanically, from its own transcript, by hooks that ship with the
 plugin (no setup beyond `jq` and `python3`):
 
-- **Edit guard**: while a worker runs, a production file can change only after
-  a test run *filtered to the current requirement* has failed, and one new test
-  at a time. Files change only through Edit/Write, never from Bash (no
-  redirects, `sed -i`, deletions, renames or commits), and only inside the
-  worker's own checkout. Each refusal tells the worker what to do instead.
+- **Edit guard**: while a worker runs, it warns when a production file changes
+  with no failing test (filtered to the current requirement) armed, when a
+  second new test is added before the last one ran, and on an unanswered
+  first-run pass. The call goes through, the worker is told why, and the
+  verifier fails the task if the method is not followed. It refuses what the
+  verifier and the revert depend on: files change only through Edit/Write,
+  never from Bash (no redirects, `sed -i`, deletions, renames or commits), and
+  only inside the worker's own checkout. Each message tells the worker what to
+  do instead.
 - **First-run passes are cut back**: a test that passes on its first run means
   code already delivers it. The worker deletes that code until the test fails,
   then rebuilds it. Requirements expected to pass on arrival are labelled

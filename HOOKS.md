@@ -279,7 +279,7 @@ only summarises it.
 
 | Claude Code hook | Script | Does |
 |---|---|---|
-| `PreToolUse` (`Edit\|Write\|MultiEdit\|NotebookEdit\|Bash`) | `tdd-guard.sh` | Refuses a call that would break the TDD method right now, with a reason telling the worker what to do instead |
+| `PreToolUse` (`Edit\|Write\|MultiEdit\|NotebookEdit\|Bash`) | `tdd-guard.sh` | Warns about TDD-order problems and refuses what the verifier and the revert depend on, with a message telling the worker what to do instead |
 | `SubagentStop` | `tdd-subagent-stop.sh` | Runs `verify-tdd.sh` on the worker's whole transcript and writes the verdict that `plan-orchestrate` Step 6 reads |
 
 Both call `verify-tdd.sh`, so the guard and the verifier judge by the same
@@ -292,13 +292,23 @@ An agent whose type ends in `tdd-worker` (`hcf:tdd-worker`, or a project-local
 override), or, when Claude Code reports no agent type, a subagent whose first
 prompt has a `## Task File Path` heading.
 
+### What the guard warns about
+
+The call goes through and the worker is told why. The verifier still fails the
+task if the method is not followed.
+
+- **A production change with no failing test armed.** A production file should
+  change only after a test run *filtered to the current requirement* has
+  failed. Adding a new test disarms production again until that test has
+  failed.
+- **A second new test** before the last one has been run, or more than one new
+  test in a single edit.
+- **An unanswered first-run pass.** A filtered run passed for a requirement
+  that never failed: cut back (below) before changing production code or adding
+  another test.
+
 ### What the guard refuses
 
-- **A production change with no failing test.** A production file can change
-  only after a test run *filtered to the current requirement* has failed.
-  Adding a new test locks production again until that test has failed.
-- **Batches of tests.** A second new test before the last one has been run, or
-  more than one new test in a single edit.
 - **Project files changed from Bash.** Files change only through
   Edit/Write/MultiEdit, so every change is recorded and can be checked and
   reverted. Refused: redirects (including `cat <<EOF > file`), `tee`,
@@ -370,8 +380,8 @@ it may pass on the first run.
 
 When any other test passes on its first filtered run, some production code
 already delivers it. The worker **cuts it back**: until the pass is answered
-the guard allows only removal-only Edits to production files (the edit's new
-text keeps some of the old text's tokens in order and adds none), and once the
+the guard warns about any production edit that is not removal-only (the edit's
+new text keeps some of the old text's tokens in order and adds none), and once the
 test fails on a filtered run the code is rebuilt in GREEN. The verifier counts
 that as red before green; a cut-back not followed by a failing run of that
 requirement (before any other production change or new test) is a violation.

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # HCF PreToolUse hook (matcher: Edit|Write|MultiEdit|NotebookEdit|Bash).
 #
-# Inside a tdd-worker, refuses any change to a production file unless a failing
-# test run has armed it (see verify-tdd.sh --gate). Test files, markdown, plan
-# files and paths outside the project are allowed through Edit/Write (the task
-# file never from Bash, and never with an edit that removes or renames a
-# requirement line or labels one (guard)). Until every file the prompt says to read IN
-# FULL has been read, it refuses every file change but the task file.
-# Everywhere else (the main session, other agents) it does nothing.
+# Inside a tdd-worker, warns about TDD-order problems (see verify-tdd.sh
+# --gate): a production change with no failing test armed, a second new test
+# before the last one ran, an unanswered first-run pass. The call goes through
+# and the worker is told why; the verifier still fails the task if the method
+# is not followed. It refuses only what the verifier and the revert depend on:
+# Bash writes, deletions, renames, git tree changes, commits, other checkouts,
+# bare formatter runs, files the prompt says to read IN FULL that are still
+# unread, and task-file edits that remove or rename a requirement line or label
+# one (guard). Everywhere else (the main session, other agents) it does nothing.
 #
 # A refusal is a PreToolUse "deny" with the reason fed back to the worker, so it
 # learns why and what to do instead. It fails closed: inside a tdd-worker whose
@@ -116,6 +118,9 @@ tool_use_id="$(printf '%s' "$input" | jq -r '.tool_use_id // empty')"
 # them (see verify-tdd.sh --gate), so the gate reads them too.
 sidecar="$(dirname "$HCF_TDD_TASK_FILE")/.tdd/$(basename "$HCF_TDD_TASK_FILE").${HCF_TDD_AGENT_ID:-worker}.calls"
 
+WARN_END="The verifier will fail this task if the method is not followed."
+warning=""
+
 errf="$(mktemp "${TMPDIR:-/tmp}/hcf-guard.XXXXXX")"
 trap 'rm -f "$errf"' EXIT
 verdict="$(HCF_GATE_ID="$tool_use_id" HCF_GATE_REMOVAL="$removal" HCF_GATE_ADDED="$added" HCF_GATE_TOOL="$tool" HCF_GATE_PATH="$path" HCF_GATE_CMD="$cmd" HCF_GATE_CWD="$HCF_TDD_CWD" HCF_GATE_SIDECAR="$sidecar" \
@@ -129,52 +134,59 @@ case "$verdict" in
     target="${verdict#DENY-CHECKOUT }"
     reason="HCF TDD guard: refused a change to $target: it is in another checkout of this repository, but you are working in $HCF_TDD_CWD. Make every change inside your own working directory ($HCF_TDD_CWD), at the same path relative to it; never edit the main checkout or another worktree."
     deny "$reason" ;;
-  DENY-BATCH\ *)
-    reason="HCF TDD guard: refused to add another test to ${verdict#DENY-BATCH }. You added a new test that has not been run yet. One test at a time: run the test you just wrote, filtered to its name, and see it fail before writing the next one."
-    deny "$reason" ;;
-  DENY-PASSFIRST\ *)
-    name="${verdict#DENY-PASSFIRST }"
-    reason="HCF TDD guard: the test for \`$name\` passed on its first filtered run, and that needs an answer before you change production code or add another test. The answer is almost always to cut back: some production code already makes this test pass (an earlier GREEN step that built more than its test needed, or code an earlier test needed). Delete that code with removal-only Edits (each new_string keeps only tokens of its old_string, in the same order, and adds none: no new names, values, operators or rewording) until this test fails; run it filtered to its name and see it FAIL; then rebuild the code in GREEN. Until then only removal-only Edits to production files are allowed. If instead the test is wrong: edit it so it fails for the reason the requirement describes, and run it again. Only when NO production code delivers this behaviour (nothing to delete: a language or framework guarantee) add to the task file's Implementation Notes, exactly: PASSED-FIRST: $name — no-code: <what guarantees it>. The orchestrator checks that claim, and a PASSED-FIRST line without no-code: is not accepted. From here on build only what each test needs."
-    deny "$reason" ;;
+  WARN-BATCH\ *)
+    # Not a refusal either: allowed and recorded below, with a warning.
+    warning="HCF TDD guard: warning: another test was added to ${verdict#WARN-BATCH } while the last new test has not been run. One test at a time: run the test you just wrote, filtered to its name, and see it fail before writing the next one. $WARN_END" ;;
+  WARN-PASSFIRST\ *)
+    name="${verdict#WARN-PASSFIRST }"
+    # Not a refusal: allowed and recorded below, with a warning.
+    warning="HCF TDD guard: warning: the test for \`$name\` passed on its first filtered run, and that needs an answer before you change production code or add another test. The answer is almost always to cut back: some production code already makes this test pass (an earlier GREEN step that built more than its test needed, or code an earlier test needed). Delete that code with removal-only Edits (each new_string keeps only tokens of its old_string, in the same order, and adds none: no new names, values, operators or rewording) until this test fails; run it filtered to its name and see it FAIL; then rebuild the code in GREEN. If instead the test is wrong: edit it so it fails for the reason the requirement describes, and run it again. Only when NO production code delivers this behaviour (nothing to delete: a language or framework guarantee) add to the task file's Implementation Notes, exactly: PASSED-FIRST: $name — no-code: <what guarantees it>. The orchestrator checks that claim, and a PASSED-FIRST line without no-code: is not accepted. From here on build only what each test needs. $WARN_END" ;;
   DENY-BASH\ *)
     target="${verdict#DENY-BASH }"
     reason="HCF TDD guard: refused a Bash command that changes $target. In a tdd-worker, project files (tests, production code and your task file alike) may only be changed with the Edit, Write or MultiEdit tools, so each change can be checked against the TDD method. Use Bash only to run tests, linters and read-only commands; that includes git commands that change the working tree or its history (checkout, restore, apply, stash, rm, mv, commit), patch, touch, ln, curl -o, rm of anything git does not ignore (caches and build output may be deleted), generators such as artisan make:, and sh -c / bash -c / eval wrapping any of these. Make this change with Edit or Write instead (for a generator, write the file it would create yourself). Do not delete or rename a project file yourself: if the task needs one gone, leave it in place and name it in the task file's Implementation Notes for the orchestrator."
     deny "$reason" ;;
-  DENY\ *)
-    target="${verdict#DENY }"
-    reason="HCF TDD guard: refused to change production file $target. No failing test is armed: either no test has failed yet, or you added a new test since the last failing run. Follow the method: write ONE test for the next requirement, run it alone with the filtered RED command and see it FAIL, then make the minimal production change. A run counts as failing only when the runner itself is the command (not inside a comment or an echo), it is filtered to the requirement's test name, and its output shows the failure (keep at least the runner's summary line if you trim it with tail or grep); an infrastructure error (Docker or the database not reachable, no tests found, a parse or syntax error, out of memory) is not a failing test: fix it and run again. If this is a refactor, run the suite green first and do not add a new test before refactoring."
-    deny "$reason" ;;
-  ALLOW)
-    # Record an allowed file change as a transcript-shaped tool_use line,
-    # appended under a lock so parallel hook runs never interleave.
-    case "$tool" in
-      Edit|Write|MultiEdit|NotebookEdit)
-        if mkdir -p "$(dirname "$sidecar")" 2>/dev/null; then
-          # Which transcript holds this task's changes, for revert-task.sh when
-          # the worker never reaches its stop hook (an interrupted run).
-          printf '%s\n' "$HCF_TDD_TRANSCRIPT" > "$(dirname "$sidecar")/$(basename "$HCF_TDD_TASK_FILE").transcript" 2>/dev/null
-          # The file as it was before this worker's first change to it: the
-          # transcript often records no snapshot (originalFile null), and an
-          # edit that only deletes text cannot be undone by searching for it.
-          if [ -n "$path" ] && [ -f "$path" ]; then
-            pre="${sidecar%.calls}.pre"
-            key="$(printf '%s' "$path" | shasum -a 256 | cut -c1-64)"
-            [ -e "$pre/$key" ] || { mkdir -p "$pre" && cp -p "$path" "$pre/$key"; } 2>/dev/null
-          fi
-          # hcf_added: the tests this call adds, as counted above against the
-          # file on disk; --gate uses it for a Write whose result is not in
-          # the transcript yet.
-          line="$(printf '%s' "$input" | jq -c --arg id "${tool_use_id:-hcf-$$-$(date +%s)}" --argjson added "$added" '{type: "assistant", cwd: .cwd, hcf_added: $added, message: {content: [{type: "tool_use", id: $id, name: .tool_name, input: (.tool_input // {})}]}}')"
-          n=0
-          while ! mkdir "$sidecar.lock" 2>/dev/null && [ $n -lt 50 ]; do n=$((n + 1)); sleep 0.1; done
-          printf '%s\n' "$line" >> "$sidecar"
-          rmdir "$sidecar.lock" 2>/dev/null
-        fi ;;
-    esac ;;
+  WARN\ *)
+    # Not a refusal: the call goes through, recorded below, with a warning. The
+    # verifier still fails the task if the method is not followed.
+    target="${verdict#WARN }"
+    warning="HCF TDD guard: warning: production file $target changed with no failing test armed. No failing test is armed: either no test has failed yet, or you added a new test since the last failing run. Follow the method: write ONE test for the next requirement, run it alone with the filtered RED command and see it FAIL, then make the minimal production change. A run counts as failing only when the runner itself is the command (not inside a comment or an echo), it is filtered to the requirement's test name, and its output shows the failure (keep at least the runner's summary line if you trim it with tail or grep); an infrastructure error (Docker or the database not reachable, no tests found, a parse or syntax error, out of memory) is not a failing test: fix it and run again. If this is a refactor, the suite must be green and no new test added since the last failing run. $WARN_END" ;;
+  ALLOW) ;;
   *)
     # No verdict: the check itself failed. Refuse rather than let it through.
     why="$(head -n 3 "$errf" | tr '\n' ' ')"
     reason="HCF TDD guard: could not check this call, so it is refused rather than allowed unchecked (${why:-no verdict from verify-tdd.sh}). Retry it once. If it is refused again for the same reason, stop and end with exactly: TASK_FAILED: TDD guard error — <this message>."
     deny "$reason" ;;
 esac
+
+# The call is allowed: record a file change as a transcript-shaped tool_use
+# line, appended under a lock so parallel hook runs never interleave.
+case "$tool" in
+  Edit|Write|MultiEdit|NotebookEdit)
+    if mkdir -p "$(dirname "$sidecar")" 2>/dev/null; then
+      # Which transcript holds this task's changes, for revert-task.sh when
+      # the worker never reaches its stop hook (an interrupted run).
+      printf '%s\n' "$HCF_TDD_TRANSCRIPT" > "$(dirname "$sidecar")/$(basename "$HCF_TDD_TASK_FILE").transcript" 2>/dev/null
+      # The file as it was before this worker's first change to it: the
+      # transcript often records no snapshot (originalFile null), and an
+      # edit that only deletes text cannot be undone by searching for it.
+      if [ -n "$path" ] && [ -f "$path" ]; then
+        pre="${sidecar%.calls}.pre"
+        key="$(printf '%s' "$path" | shasum -a 256 | cut -c1-64)"
+        [ -e "$pre/$key" ] || { mkdir -p "$pre" && cp -p "$path" "$pre/$key"; } 2>/dev/null
+      fi
+      # hcf_added: the tests this call adds, as counted above against the
+      # file on disk; --gate uses it for a Write whose result is not in
+      # the transcript yet.
+      line="$(printf '%s' "$input" | jq -c --arg id "${tool_use_id:-hcf-$$-$(date +%s)}" --argjson added "$added" '{type: "assistant", cwd: .cwd, hcf_added: $added, message: {content: [{type: "tool_use", id: $id, name: .tool_name, input: (.tool_input // {})}]}}')"
+      n=0
+      while ! mkdir "$sidecar.lock" 2>/dev/null && [ $n -lt 50 ]; do n=$((n + 1)); sleep 0.1; done
+      printf '%s\n' "$line" >> "$sidecar"
+      rmdir "$sidecar.lock" 2>/dev/null
+    fi ;;
+esac
+
+# A warning leaves the normal permissions in force: no permissionDecision.
+if [ -n "$warning" ]; then
+  jq -cn --arg c "$warning" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $c}}'
+fi
 exit 0

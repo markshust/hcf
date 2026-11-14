@@ -6,7 +6,7 @@
 # Usage:
 #   verify-tdd.sh <task-file> <agent-transcript.jsonl>            # verify
 #   verify-tdd.sh --state <task-file> <agent-transcript.jsonl>    # ARMED | DISARMED
-#   verify-tdd.sh --gate <task-file> <agent-transcript.jsonl>     # ALLOW | DENY <path> | DENY-BASH <path>
+#   verify-tdd.sh --gate <task-file> <agent-transcript.jsonl>     # ALLOW | WARN <path> | WARN-BATCH <path> | WARN-PASSFIRST <name> | DENY-*
 #   verify-tdd.sh --removal-only <Edit|MultiEdit>  < tool-input.json  # yes | no
 #   verify-tdd.sh --count-tests <Edit|MultiEdit|Write> < tool-input.json  # tests the call adds
 #
@@ -22,12 +22,14 @@
 #   call's result, or the last line itself, may not be on disk yet. --gate
 #   therefore skips lines that do not parse and counts every earlier file edit
 #   that has no result yet as done (all but the call being judged), so a
-#   half-written transcript never opens the gate. Besides DENY and DENY-BASH it
-#   can print DENY-CHECKOUT <path> (a path in another checkout of the same
-#   repository), DENY-FORMAT <cwd> (a formatter run without a file list),
-#   DENY-BATCH <path> (a new test while the last new test has not been run) and
-#   DENY-PASSFIRST <name> (a filtered run passed for a requirement that never
-#   failed, and the task file has no no-code PASSED-FIRST line for it).
+#   half-written transcript never counts as a failing run. The TDD-order
+#   verdicts only warn (the guard lets the call through): WARN <path> (a
+#   production change with no failing test armed), WARN-BATCH <path> (a new test
+#   while the last new test has not been run) and WARN-PASSFIRST <name> (a
+#   filtered run passed for a requirement that never failed, and the task file
+#   has no no-code PASSED-FIRST line for it). The rest are refusals: DENY-BASH
+#   <path>, DENY-CHECKOUT <path> (a path in another checkout of the same
+#   repository) and DENY-FORMAT <cwd> (a formatter run without a file list).
 #
 # --state prints whether a production edit would be allowed right now (a
 # failing test has armed it and no new test has disarmed it since); the tests
@@ -131,7 +133,7 @@
 #   PASSED-FIRST: <requirement name> — no-code: <reason>
 # The name must be the requirement's exact name. That is reported as a warning
 # (REVIEW). A PASSED-FIRST line without "no-code:" is not an answer: the guard
-# keeps refusing, and the verifier reports "R1 `N` passed on its first run and
+# keeps warning, and the verifier reports "R1 `N` passed on its first run and
 # was not cut back".
 #
 # Cut-back (THE answer to a first-run pass): while a filtered run naming
@@ -1144,16 +1146,16 @@ END {
       if (nreq == 0) continue
       if (is_test_file(p, gcwd)) {
         # One new test at a time: run the last one before writing the next.
-        if (gadd > 1 || (gadd > 0 && new_since_red > 0)) { print "DENY-BATCH " p; exit 0 }
-        if (gadd > 0 && open_q) { print "DENY-PASSFIRST " req[open_q]; exit 0 }
+        if (gadd > 1 || (gadd > 0 && new_since_red > 0)) { print "WARN-BATCH " p; exit 0 }
+        if (gadd > 0 && open_q) { print "WARN-PASSFIRST " req[open_q]; exit 0 }
         continue
       }
       if (open_q) {
         # A removal-only edit cuts over-built code back until the test fails.
         if (grem) continue
-        print "DENY-PASSFIRST " req[open_q]; exit 0
+        print "WARN-PASSFIRST " req[open_q]; exit 0
       }
-      if (!armed) { print "DENY " p; exit 0 }
+      if (!armed) { print "WARN " p; exit 0 }
     }
     print "ALLOW"; exit 0
   }

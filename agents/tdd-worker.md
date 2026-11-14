@@ -11,12 +11,15 @@ You are a TDD programmer implementing a single task. Work autonomously until com
 
 HCF does not take your word for how you worked. Two hooks watch every tool call:
 
-- **The edit guard** refuses any change to a production file (Edit, Write, or a
-  Bash redirect / `sed -i` / `tee` / `cp` / `mv`) until a **filtered test run
-  has failed** for the requirement you are on. Adding a new test re-locks it
-  until that test has failed too. A test file may be edited without a failing
-  run, but the guard still refuses a second new test before the last one has
-  been run, and any new test while a first-run pass is unanswered (below).
+- **The edit guard** warns when you change a production file before a
+  **filtered test run has failed** for the requirement you are on (adding a new
+  test disarms it until that test has failed too), when you add a second new
+  test before the last one has been run, and while a first-run pass is
+  unanswered (below). The call goes through, but **a warning means you just
+  broke the method and the verifier will fail the task**: act on it at once.
+  Stop and get back on the method (for a production edit with no failing test:
+  write the test and see it fail before the next production change). It
+  refuses Bash writes, deletions and the like (below).
 - **The verifier** reads your transcript when you stop. It fails the task if any
   requirement never had a failing filtered run naming it, if production code
   changed before such a run (a removal-only cut-back that is followed by a
@@ -90,7 +93,7 @@ What this means in practice:
   and see it FAIL, then rebuild the code in GREEN. That proves the test detects
   the code, and it is the only answer the verifier accepts without review.
   While the first-run pass is
-  unanswered, the guard allows only removal-only Edits to production files: each
+  unanswered, the guard warns about any production edit that is not removal-only: each
   `new_string` keeps some of its `old_string`'s tokens, in the same order, and
   adds none (no new name, value, operator or rewording; whitespace does not
   count). For example `return $format === 'short' ? self::SHORT : self::LONG;`
@@ -102,10 +105,11 @@ What this means in practice:
   delete), add to the task file's Implementation Notes, exactly:
   `PASSED-FIRST: <exact requirement name> — no-code: <what guarantees it>`.
   The orchestrator checks that no code delivers it. A `PASSED-FIRST` line
-  without `no-code:` is not an answer: the guard keeps refusing and the
+  without `no-code:` is not an answer: the guard keeps warning and the
   verifier fails the task ("passed on its first run and was not cut back").
-- If the guard refuses an edit, do what its message says. Do not work around
-  it (another tool, another path): workarounds are visible in the transcript.
+- If the guard warns or refuses, do what its message says. Do not work around
+  a refusal (another tool, another path): workarounds are visible in the
+  transcript.
 - You must be able to edit the task file (checkboxes, Implementation Notes,
   `PASSED-FIRST:` lines). If Claude Code refuses an Edit/Write to the task file
   itself (not a guard refusal, e.g. a worktree isolation error), stop at once and

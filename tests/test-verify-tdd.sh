@@ -165,7 +165,7 @@ T2="$VPROJ/disarmed.jsonl"
 { add_test "adds two numbers"; red "adds two numbers"; edit_src; green; add_test "subtracts two numbers"; } > "$T2"
 assert_eq "it reports DISARMED after a new test is added" "DISARMED" "$("$VT" --state "$TASK" "$T2")"
 out="$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/src/Calc.php" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$T2")"
-assert_eq "it denies a production edit while disarmed" "DENY $VPROJ/src/Calc.php" "$out"
+assert_eq "it warns about a production edit while disarmed" "WARN $VPROJ/src/Calc.php" "$out"
 out="$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/tests/CalcTest.php" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$T2")"
 assert_eq "it allows a test edit while disarmed" "ALLOW" "$out"
 out="$(HCF_GATE_TOOL=Bash HCF_GATE_CMD="echo x > src/Calc.php" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$VPROJ/good.jsonl")"
@@ -185,16 +185,16 @@ assert_eq "it allows editing the task file with Edit while disarmed" "ALLOW" "$o
 gate() { HCF_GATE_TOOL="$1" HCF_GATE_PATH="$2" HCF_GATE_ADDED="$3" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$4"; }
 T="$VPROJ/one-unrun.jsonl"
 { add_test "adds two numbers"; } > "$T"
-assert_eq "it denies a second new test before the first has run" "DENY-BATCH $VPROJ/tests/CalcTest.php" "$(gate Edit "$VPROJ/tests/CalcTest.php" 1 "$T")"
+assert_eq "it warns about a second new test before the first has run" "WARN-BATCH $VPROJ/tests/CalcTest.php" "$(gate Edit "$VPROJ/tests/CalcTest.php" 1 "$T")"
 assert_eq "it allows editing an existing test while one is unrun" "ALLOW" "$(gate Edit "$VPROJ/tests/CalcTest.php" 0 "$T")"
 assert_eq "it allows a new fixture file while one test is unrun" "ALLOW" "$(gate Write "$VPROJ/tests/Fixtures/Thing.php" 0 "$T")"
 T="$VPROJ/pass-first.jsonl"
 { add_test "adds two numbers"; red "adds two numbers"; edit_src; green; add_test "subtracts two numbers"; pass_run "subtracts two"; } > "$T"
-assert_eq "it denies production code after an unexplained first-run pass" "DENY-PASSFIRST it subtracts two numbers" "$(gate Edit "$VPROJ/src/Calc.php" 0 "$T")"
-assert_eq "it denies a new test after an unexplained first-run pass" "DENY-PASSFIRST it subtracts two numbers" "$(gate Edit "$VPROJ/tests/CalcTest.php" 1 "$T")"
+assert_eq "it warns about production code after an unexplained first-run pass" "WARN-PASSFIRST it subtracts two numbers" "$(gate Edit "$VPROJ/src/Calc.php" 0 "$T")"
+assert_eq "it warns about a new test after an unexplained first-run pass" "WARN-PASSFIRST it subtracts two numbers" "$(gate Edit "$VPROJ/tests/CalcTest.php" 1 "$T")"
 assert_eq "it allows fixing the test after a first-run pass" "ALLOW" "$(gate Edit "$VPROJ/tests/CalcTest.php" 0 "$T")"
 cp "$TASK" "$TASK.bak"; printf '\nPASSED-FIRST: it subtracts two numbers — shared operator table\n' >> "$TASK"
-assert_eq "it keeps denying when the recorded first-run pass names code, not no-code" "DENY-PASSFIRST it subtracts two numbers" "$(gate Edit "$VPROJ/tests/CalcTest.php" 1 "$T")"
+assert_eq "it keeps warning when the recorded first-run pass names code, not no-code" "WARN-PASSFIRST it subtracts two numbers" "$(gate Edit "$VPROJ/tests/CalcTest.php" 1 "$T")"
 mv "$TASK.bak" "$TASK"
 cp "$TASK" "$TASK.bak"; printf '\nPASSED-FIRST: it subtracts two numbers — no-code: PHP arithmetic\n' >> "$TASK"
 assert_eq "it allows the next test once a no-code first-run pass is recorded" "ALLOW" "$(gate Edit "$VPROJ/tests/CalcTest.php" 1 "$T")"
@@ -221,7 +221,7 @@ T="$VPROJ/red-before-write.jsonl"
 { add_test "adds two numbers"; red "adds two numbers"; edit_src; green; red "subtracts two"; edit_src; add_test "subtracts two numbers"; green; } > "$T"
 assert_exit "it does not count a failing run from before the test was written" 1 "$(verify "$T")"
 
-assert_eq "it denies one edit that adds two tests at once" "DENY-BATCH $VPROJ/tests/CalcTest.php" "$(gate Edit "$VPROJ/tests/CalcTest.php" 2 "$VPROJ/good.jsonl")"
+assert_eq "it warns about one edit that adds two tests at once" "WARN-BATCH $VPROJ/tests/CalcTest.php" "$(gate Edit "$VPROJ/tests/CalcTest.php" 2 "$VPROJ/good.jsonl")"
 fmt() { HCF_GATE_TOOL=Bash HCF_GATE_CMD="$1" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$VPROJ/good.jsonl"; }
 assert_eq "it allows a formatter on named files" "ALLOW" "$(fmt "./vendor/bin/php-cs-fixer fix src/Calc.php tests/CalcTest.php")"
 assert_eq "it denies a formatter with no file list" "DENY-FORMAT $VPROJ" "$(fmt "./vendor/bin/php-cs-fixer fix")"
@@ -310,7 +310,27 @@ assert_eq "it records a NONE verdict for a task with no test requirements" "NONE
 GD="$REPO_ROOT/hooks/tdd-guard.sh"
 mk_worker "$VPROJ/disarmed.jsonl" "$VPROJ/agent-disarmed.jsonl"
 out="$(jq -cn --arg tp "$VPROJ/agent-disarmed.jsonl" --arg cwd "$VPROJ" --arg p "$VPROJ/src/Calc.php" '{agent_id:"x3", agent_type:"hcf:tdd-worker", agent_transcript_path:$tp, cwd:$cwd, tool_name:"Edit", tool_input:{file_path:$p}}' | "$GD")"
-assert_contains "it denies the edit through the PreToolUse hook" "$out" '"permissionDecision":"deny"'
+assert_contains "it warns about the edit through the PreToolUse hook" "$out" '"additionalContext"'
+WARN_END="The verifier will fail this task if the method is not followed."
+warns() { printf '%s' "$1" | jq -r --arg end "$WARN_END" 'if (.hookSpecificOutput | has("permissionDecision") | not) and (.hookSpecificOutput.additionalContext | endswith($end)) then "warns" else "other" end' 2>/dev/null; }
+assert_eq "it lets a production edit with no failing test through the hook with a warning" "warns" "$(warns "$out")"
+T="$VPROJ/ignored-warning.jsonl"
+{ edit_src; add_test "adds two numbers"; red "adds two numbers"; green
+  add_test "subtracts two numbers"; red "subtracts two"; edit_src; green; } > "$T"
+_code="$(verify "$T")"
+assert_eq "it still fails a task whose worker ignored the no-failing-test warning" "1 yes" "$_code $(grep -q 'R2 production file edited' "$VPROJ/out" && echo yes || echo no)"
+printf 'a\n' > "$VPROJ/src/Calc.php"
+jq -cn --arg tp "$VPROJ/agent-disarmed.jsonl" --arg cwd "$VPROJ" --arg p "$VPROJ/src/Calc.php" '{agent_id:"x11", agent_type:"hcf:tdd-worker", agent_transcript_path:$tp, cwd:$cwd, tool_name:"Edit", tool_use_id:"w1", tool_input:{file_path:$p, old_string:"a", new_string:"b"}}' | "$GD" > /dev/null
+WPRE="$VPLAN/.tdd/001-demo.md.x11"
+assert_eq "it records a warned edit in the sidecar and keeps its pre-image copy" "recorded a" "$(grep -q '"id":"w1"' "$WPRE.calls" 2>/dev/null && echo recorded) $(cat "$WPRE.pre/$(printf '%s' "$VPROJ/src/Calc.php" | shasum -a 256 | cut -c1-64)" 2>/dev/null)"
+rm -f "$VPROJ/src/Calc.php"
+T="$VPROJ/refactor.jsonl"
+{ add_test "adds two numbers"; red "adds two numbers"; edit_src; green
+  add_test "subtracts two numbers"; red "subtracts two"; edit_src; green; } > "$T"
+mk_worker "$T" "$VPROJ/agent-refactor.jsonl"
+out="$(jq -cn --arg tp "$VPROJ/agent-refactor.jsonl" --arg cwd "$VPROJ" --arg p "$VPROJ/src/Calc.php" '{agent_id:"x12", agent_type:"hcf:tdd-worker", agent_transcript_path:$tp, cwd:$cwd, tool_name:"Edit", tool_use_id:"r1", tool_input:{file_path:$p, old_string:"b", new_string:"c"}}' | "$GD")"
+edit_src >> "$T"
+assert_eq "it lets a pure refactor after a green run through the hook without a warning and verifies it" "empty 0" "${out:-empty} $(verify "$T")"
 out="$(jq -cn --arg tp "$VPROJ/agent-disarmed.jsonl" --arg cwd "$VPROJ" --arg p "$VPROJ/src/Calc.php" '{tool_name:"Edit", cwd:$cwd, tool_input:{file_path:$p}}' | "$GD")"
 assert_empty "it leaves the main session alone" "$out"
 
@@ -403,33 +423,37 @@ mv "$TASK.bak" "$TASK"
 add_test_pending() { tx_use Edit "$(jq -cn --arg p "$VPROJ/tests/CalcTest.php" --arg s "it('$1', function () {});" '{file_path:$p, old_string:"", new_string:$s}')"; }
 T="$VPROJ/lagging-result.jsonl"
 { add_test "adds two numbers"; red "adds two numbers"; edit_src; green; add_test_pending "subtracts two numbers"; } > "$T"
-assert_eq "it denies production code while a new test's edit has no result on disk yet" "DENY $VPROJ/src/Calc.php" "$(gate Write "$VPROJ/src/Calc.php" 0 "$T")"
+assert_eq "it warns about production code while a new test's edit has no result on disk yet" "WARN $VPROJ/src/Calc.php" "$(gate Write "$VPROJ/src/Calc.php" 0 "$T")"
 assert_eq "it does not count the call being judged as an earlier test" "ALLOW" "$(HCF_GATE_ID="t$_n" gate Edit "$VPROJ/tests/CalcTest.php" 1 "$T")"
 assert_eq "it does not count the call being judged when no id is given" "ALLOW" "$(gate Edit "$VPROJ/tests/CalcTest.php" 1 "$T")"
 T="$VPROJ/partial-line.jsonl"
 { add_test "adds two numbers"; red "adds two numbers"; edit_src; green; add_test "subtracts two numbers"; printf '{"type":"assistant","message":{"content":[{"type":"tool_u'; } > "$T"
-assert_eq "it judges a transcript whose last line is still being written" "DENY $VPROJ/src/Calc.php" "$(gate Write "$VPROJ/src/Calc.php" 0 "$T")"
+assert_eq "it judges a transcript whose last line is still being written" "WARN $VPROJ/src/Calc.php" "$(gate Write "$VPROJ/src/Calc.php" 0 "$T")"
 mk_worker "$T" "$VPROJ/agent-partial.jsonl"
 out="$(jq -cn --arg tp "$VPROJ/agent-partial.jsonl" --arg cwd "$VPROJ" --arg p "$VPROJ/src/Calc.php" '{agent_id:"x5", agent_type:"hcf:tdd-worker", agent_transcript_path:$tp, cwd:$cwd, tool_name:"Write", tool_use_id:"live1", tool_input:{file_path:$p, content:"<?php"}}' | "$GD")"
-assert_contains "it denies through the hook while the transcript's last line is incomplete" "$out" '"permissionDecision":"deny"'
+assert_contains "it warns through the hook while the transcript's last line is incomplete" "$out" '"additionalContext"'
 
 T="$VPROJ/pass-first.jsonl"
 assert_eq "it allows a removal-only production edit after a first-run pass" "ALLOW" "$(HCF_GATE_REMOVAL=yes gate Edit "$VPROJ/src/Calc.php" 0 "$T")"
-assert_eq "it denies a production edit that adds tokens after a first-run pass" "DENY-PASSFIRST it subtracts two numbers" "$(HCF_GATE_REMOVAL=no gate Edit "$VPROJ/src/Calc.php" 0 "$T")"
-assert_eq "it denies a production Write after a first-run pass" "DENY-PASSFIRST it subtracts two numbers" "$(HCF_GATE_REMOVAL=yes gate Write "$VPROJ/src/Calc.php" 0 "$T")"
+assert_eq "it warns about a production edit that adds tokens after a first-run pass" "WARN-PASSFIRST it subtracts two numbers" "$(HCF_GATE_REMOVAL=no gate Edit "$VPROJ/src/Calc.php" 0 "$T")"
+assert_eq "it warns about a production Write after a first-run pass" "WARN-PASSFIRST it subtracts two numbers" "$(HCF_GATE_REMOVAL=yes gate Write "$VPROJ/src/Calc.php" 0 "$T")"
 T="$VPROJ/cut-open.jsonl"
 { overbuilt; cut_src "$ternary_old" "$ternary_new"; } > "$T"
-assert_eq "it still denies a new test while a cut-back has not gone red" "DENY-PASSFIRST it subtracts two numbers" "$(gate Edit "$VPROJ/tests/CalcTest.php" 1 "$T")"
+assert_eq "it still warns about a new test while a cut-back has not gone red" "WARN-PASSFIRST it subtracts two numbers" "$(gate Edit "$VPROJ/tests/CalcTest.php" 1 "$T")"
 { overbuilt; cut_src "$ternary_old" "$ternary_new"; red "subtracts two"; } > "$T"
 assert_eq "it allows rebuilding once the cut-back test fails" "ALLOW" "$(gate Edit "$VPROJ/src/Calc.php" 0 "$T")"
 mk_worker "$VPROJ/pass-first.jsonl" "$VPROJ/agent-pass-first.jsonl"
 guard_edit() { jq -cn --arg tp "$VPROJ/agent-pass-first.jsonl" --arg cwd "$VPROJ" --arg p "$VPROJ/src/Calc.php" --arg o "$1" --arg n "$2" '{agent_id:"x4", agent_type:"hcf:tdd-worker", agent_transcript_path:$tp, cwd:$cwd, tool_name:"Edit", tool_input:{file_path:$p, old_string:$o, new_string:$n}}' | "$GD"; }
 assert_empty "it lets a removal-only cut-back through the PreToolUse hook" "$(guard_edit "$ternary_old" "$ternary_new")"
 out="$(guard_edit "return a;" "return a + b;")"
-assert_contains "it denies an adding edit through the hook after a first-run pass" "$out" '"permissionDecision":"deny"'
+assert_eq "it lets an adding edit after a first-run pass through the hook with a warning" "warns" "$(warns "$out")"
 assert_contains "it offers the cut-back in the pass-first message" "$out" "removal-only"
-assert_contains "it leads the pass-first message with the cut-back" "$(printf '%s' "$out" | jq -r .hookSpecificOutput.permissionDecisionReason | cut -c1-400)" "cut back"
+assert_contains "it leads the pass-first message with the cut-back" "$(printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext | cut -c1-400)" "cut back"
 assert_contains "it keeps PASSED-FIRST for code-free behaviour only" "$out" "no-code:"
+T="$VPROJ/ignored-passfirst-warning.jsonl"
+{ add_test "adds two numbers"; red "adds two numbers"; edit_src; green; add_test "subtracts two numbers"; pass_run "subtracts two"; edit_src; green; } > "$T"
+_code="$(verify "$T")"
+assert_eq "it still fails a task whose worker ignored the first-run-pass warning" "1 yes" "$_code $(grep -q 'R1 `it subtracts two numbers` never had a failing test run' "$VPROJ/out" && echo yes || echo no)"
 
 # A test helper that calls test() (Pest's test()->markTestSkipped(), say) is
 # not a new test: only it(/test( followed by a name string declares one. A
@@ -451,7 +475,12 @@ out="$(guard_test_edit "" "it(
     'subtracts two numbers',
     function () {},
 );")"
-assert_contains "it still counts a test whose name starts on the next line" "$out" "refused to add another test"
+assert_eq "it lets a second new test through the hook with a warning" "warns" "$(warns "$out")"
+T="$VPROJ/ignored-batch-warning.jsonl"
+{ add_test "adds two numbers"; add_test "subtracts two numbers"; red "adds two numbers"; edit_src; red "subtracts two"; edit_src; green; } > "$T"
+_code="$(verify "$T")"
+assert_eq "it still fails a task whose worker ignored the batch warning" "1 yes" "$_code $(grep -q 'R3 2 new tests' "$VPROJ/out" && echo yes || echo no)"
+assert_contains "it still counts a test whose name starts on the next line" "$out" "another test was added to"
 counted="it(
     'x', fn () => 1); test()->skip(); \$this->test('y'); it('z', fn () => 2);"
 assert_eq "it counts only it(/test( calls that name a test" "2" "$(jq -cn --arg n "$counted" '{new_string:$n, old_string:""}' | "$VT" --count-tests Edit)"
@@ -495,7 +524,7 @@ assert_contains "it names the relabelled requirement" "$(cat "$VPROJ/out")" "(gu
 printf '# Task 001: Demo\n\nRequirements: adds, subtracts\n' > "$TASK"
 { edit_src; green; } > "$VPROJ/h-broken.jsonl"; mk_yworker "$VPROJ/h-broken.jsonl" "$VPROJ/agent-h-broken.jsonl"
 assert_exit "it fails a worker that broke the requirement format instead of reporting NONE" 1 "$(verify "$VPROJ/agent-h-broken.jsonl")"
-assert_eq "it keeps the gate shut when the task file lost its requirements" "DENY $VPROJ/src/Calc.php" "$(gate Edit "$VPROJ/src/Calc.php" 0 "$VPROJ/agent-h-broken.jsonl")"
+assert_eq "it keeps the gate shut when the task file lost its requirements" "WARN $VPROJ/src/Calc.php" "$(gate Edit "$VPROJ/src/Calc.php" 0 "$VPROJ/agent-h-broken.jsonl")"
 mv "$TASK.bak" "$TASK"
 { add_test "adds two numbers"; red "adds two numbers"; edit_src; green; add_test "subtracts two numbers"; red "subtracts two"; edit_src; green; } > "$VPROJ/h-ok.jsonl"; mk_yworker "$VPROJ/h-ok.jsonl" "$VPROJ/agent-h-ok.jsonl"
 assert_exit "it passes a clean worker whose prompt carries its requirements" 0 "$(verify "$VPROJ/agent-h-ok.jsonl")"
@@ -649,13 +678,13 @@ verify "$T" > /dev/null
 assert_not_contains "it does not count a Bash write the guard refused" "$(cat "$VPROJ/out")" "R4"
 
 # 4. Test files are classified relative to the project, by real conventions.
-assert_eq "it treats a production class named Spec.php as production" "DENY $VPROJ/src/Sandbox/Spec.php" "$(gate Edit "$VPROJ/src/Sandbox/Spec.php" 0 "$VPROJ/disarmed.jsonl")"
-assert_eq "it treats a production class named Test.php as production" "DENY $VPROJ/src/Test.php" "$(gate Edit "$VPROJ/src/Test.php" 0 "$VPROJ/disarmed.jsonl")"
+assert_eq "it treats a production class named Spec.php as production" "WARN $VPROJ/src/Sandbox/Spec.php" "$(gate Edit "$VPROJ/src/Sandbox/Spec.php" 0 "$VPROJ/disarmed.jsonl")"
+assert_eq "it treats a production class named Test.php as production" "WARN $VPROJ/src/Test.php" "$(gate Edit "$VPROJ/src/Test.php" 0 "$VPROJ/disarmed.jsonl")"
 assert_eq "it treats calc_test.go as a test file" "ALLOW" "$(gate Edit "$VPROJ/calc_test.go" 0 "$VPROJ/disarmed.jsonl")"
 assert_eq "it treats calc.spec.ts as a test file" "ALLOW" "$(gate Edit "$VPROJ/src/calc.spec.ts" 0 "$VPROJ/disarmed.jsonl")"
 SPROJ="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/hcf-under.XXXXXX")" && pwd -P)/spec/app"
 mkdir -p "$SPROJ/.claude/plans/demo" "$SPROJ/src"; cp "$TASK" "$SPROJ/.claude/plans/demo/001-demo.md"; : > "$SPROJ/empty.jsonl"
-assert_eq "it classifies by the project-relative path when the project lives under spec/" "DENY $SPROJ/src/Calc.php" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$SPROJ/src/Calc.php" HCF_GATE_CWD="$SPROJ" "$VT" --gate "$SPROJ/.claude/plans/demo/001-demo.md" "$SPROJ/empty.jsonl")"
+assert_eq "it classifies by the project-relative path when the project lives under spec/" "WARN $SPROJ/src/Calc.php" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$SPROJ/src/Calc.php" HCF_GATE_CWD="$SPROJ" "$VT" --gate "$SPROJ/.claude/plans/demo/001-demo.md" "$SPROJ/empty.jsonl")"
 
 # 5. Matching normalises names; exact filters win; PASSED-FIRST is exact.
 TASK5="$VPLAN/005-twice.md"
@@ -669,7 +698,7 @@ assert_exit "it credits an exact filter to the shorter of two overlapping requir
 T="$VPROJ/h-twice-pass.jsonl"
 { add_test "adds two numbers"; pass_run "it adds two numbers"; } > "$T"
 printf 'PASSED-FIRST: it adds two numbers twice — no-code: x\n' >> "$TASK5"
-assert_eq "it matches a PASSED-FIRST line on the exact requirement name" "DENY-PASSFIRST it adds two numbers" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/src/Calc.php" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK5" "$T")"
+assert_eq "it matches a PASSED-FIRST line on the exact requirement name" "WARN-PASSFIRST it adds two numbers" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/src/Calc.php" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK5" "$T")"
 rm -f "$TASK5"
 
 # 6. Inside a tdd-worker the hooks fail closed.
@@ -680,7 +709,7 @@ BPROMPT="$(jq -cn --arg t "## Task File Path
 ## Your Task" '{type:"user", message:{content:$t}}')"
 { printf '%s\n' "$BPROMPT"; cat "$VPROJ/disarmed.jsonl"; } > "$VPROJ/agent-bt.jsonl"
 out="$(jq -cn --arg tp "$VPROJ/agent-bt.jsonl" --arg cwd "$VPROJ" --arg p "$VPROJ/src/Calc.php" '{agent_id:"h6", agent_type:"hcf:tdd-worker", agent_transcript_path:$tp, cwd:$cwd, tool_name:"Edit", tool_input:{file_path:$p, old_string:"a", new_string:"b"}}' | "$GD")"
-assert_contains "it reads a task path in backticks after a blank line" "$(printf '%s' "$out" | jq -r .hookSpecificOutput.permissionDecisionReason)" "No failing test is armed"
+assert_contains "it reads a task path in backticks after a blank line" "$(printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext)" "No failing test is armed"
 LPROMPT="$(jq -cn --arg t "## Context
 $(i=0; while [ $i -lt 250 ]; do echo "line $i"; i=$((i + 1)); done)
 ## Task File Path
@@ -689,7 +718,7 @@ $TASK
 ## Your Task" '{type:"user", message:{content:$t}}')"
 { printf '%s\n' "$LPROMPT"; cat "$VPROJ/disarmed.jsonl"; } > "$VPROJ/agent-long.jsonl"
 out="$(jq -cn --arg tp "$VPROJ/agent-long.jsonl" --arg cwd "$VPROJ" --arg p "$VPROJ/src/Calc.php" '{agent_id:"h7", agent_type:"hcf:tdd-worker", agent_transcript_path:$tp, cwd:$cwd, tool_name:"Edit", tool_input:{file_path:$p, old_string:"a", new_string:"b"}}' | "$GD")"
-assert_contains "it finds the task path beyond line 200 of the prompt" "$(printf '%s' "$out" | jq -r .hookSpecificOutput.permissionDecisionReason)" "No failing test is armed"
+assert_contains "it finds the task path beyond line 200 of the prompt" "$(printf '%s' "$out" | jq -r .hookSpecificOutput.additionalContext)" "No failing test is armed"
 MPROMPT="$(jq -cn --arg t "## Task File Path
 $VPLAN/999-missing.md
 
@@ -733,7 +762,7 @@ lres "$LROOT/wt/.claude/plans/demo/scratch.md" > "$LROOT/revert.jsonl"
 "$REPO_ROOT/hooks/revert-task.sh" "$LTASK" "$LROOT/revert.jsonl" > /dev/null 2>&1
 assert_contains "it never reverts plan files reached through a symlinked plan directory" "$(cat "$LROOT/main/.claude/plans/demo/scratch.md")" "- [x] done"
 ln -s "$VPROJ" "$LROOT/projlink"
-assert_eq "it checks a production path when cwd is a symlink to the project" "DENY $VPROJ/src/Calc.php" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/src/Calc.php" HCF_GATE_CWD="$LROOT/projlink" "$VT" --gate "$TASK" "$VPROJ/disarmed.jsonl")"
+assert_eq "it checks a production path when cwd is a symlink to the project" "WARN $VPROJ/src/Calc.php" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/src/Calc.php" HCF_GATE_CWD="$LROOT/projlink" "$VT" --gate "$TASK" "$VPROJ/disarmed.jsonl")"
 assert_eq "it still recognises a test file through that symlinked cwd" "ALLOW" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/tests/CalcTest.php" HCF_GATE_CWD="$LROOT/projlink" "$VT" --gate "$TASK" "$VPROJ/disarmed.jsonl")"
 rm -rf "$LROOT" "$(dirname "$(dirname "$SPROJ")")"
 
@@ -743,13 +772,13 @@ T="$VPROJ/h-lag.jsonl"
 { only_adds; } > "$T"
 { add_test "subtracts two numbers"; } | head -n 1 > "$VPROJ/h-lag.calls"
 assert_eq "it allows the edit when the transcript lags and no sidecar is given (the old hole)" "ALLOW" "$(gate Edit "$VPROJ/src/Calc.php" 0 "$T")"
-assert_eq "it counts a sidecar call missing from the transcript as done" "DENY $VPROJ/src/Calc.php" "$(HCF_GATE_SIDECAR="$VPROJ/h-lag.calls" gate Edit "$VPROJ/src/Calc.php" 0 "$T")"
+assert_eq "it counts a sidecar call missing from the transcript as done" "WARN $VPROJ/src/Calc.php" "$(HCF_GATE_SIDECAR="$VPROJ/h-lag.calls" gate Edit "$VPROJ/src/Calc.php" 0 "$T")"
 mk_worker "$T" "$VPROJ/agent-lag.jsonl"
 rm -f "$VPLAN/.tdd/001-demo.md.lag1.calls"
 lag_edit() { jq -cn --arg tp "$VPROJ/agent-lag.jsonl" --arg cwd "$VPROJ" --arg p "$1" --arg n "$2" --arg id "$3" '{agent_id:"lag1", agent_type:"hcf:tdd-worker", agent_transcript_path:$tp, cwd:$cwd, tool_name:"Edit", tool_use_id:$id, tool_input:{file_path:$p, old_string:"", new_string:$n}}' | "$GD"; }
 assert_empty "it allows the new test through the hook" "$(lag_edit "$VPROJ/tests/CalcTest.php" "it('subtracts two numbers', function () {});" s1)"
 assert_contains "it records the allowed call in a sidecar" "$(cat "$VPLAN/.tdd/001-demo.md.lag1.calls" 2>/dev/null)" '"id":"s1"'
-assert_contains "it denies the production edit streamed right after it" "$(lag_edit "$VPROJ/src/Calc.php" "x" s2)" '"permissionDecision":"deny"'
+assert_contains "it warns about the production edit streamed right after it" "$(lag_edit "$VPROJ/src/Calc.php" "x" s2)" '"additionalContext"'
 rm -f "$VPLAN/.tdd/001-demo.md.lag1.calls"
 
 # 13. Another checkout of the same repository is not "outside the project".
