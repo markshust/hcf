@@ -15,10 +15,13 @@ tests). There is no application code.
   - `tdd-guard.sh` - PreToolUse (Edit|Write|MultiEdit|NotebookEdit|Bash). Inside
     a tdd-worker, judges each file change live via `verify-tdd.sh --gate`,
     records allowed calls in a sidecar (`<plan>/.tdd/<task>.<agent>.calls`) and
-    a pre-image copy of each file (`.pre/`) for an exact revert.
+    a pre-image copy of each file (`.pre/`) for an exact revert. Its `--gate`
+    run also keeps an event cache beside the sidecar
+    (`<plan>/.tdd/<task>.<agent>.events`); see HOOKS.md.
   - `verify-tdd.sh` - the TDD verifier. Default mode reads a finished worker
     transcript and prints OK / REVIEW / FAILED with violations R0-R6; `--gate`
-    judges one pending call; `--state`, `--count-tests`, `--removal-only`
+    judges one pending call (flattening only newly appended transcript lines
+    via the event cache; `HCF_GATE_NO_CACHE=1` forces a full replay); `--state`, `--count-tests`, `--removal-only`
     helpers.
   - `tdd-subagent-stop.sh` - SubagentStop: runs the verifier and writes the
     task's verdict (`<plan>/.tdd/<task>.verdict`).

@@ -427,6 +427,7 @@ plans directory is never committed, so neither are these.
 | `001-foo.md.verdict` | stop hook | the verdict, a `transcript:` line naming the transcript it judged, then the verifier's report |
 | `001-foo.md.transcript` | guard, on each file change it allows | the worker's transcript path, so an interrupted worker (no stop hook, no verdict) can still be reverted |
 | `001-foo.md.<agent id>.calls` | guard | each file change it allowed, as transcript lines. The transcript can lag behind tools streamed in one message, so the guard reads these back with it |
+| `001-foo.md.<agent id>.events` | guard, in its `--gate` run | a cache of the flattened transcript events, so the next gate call flattens only what was appended. First line: metadata (offset covered, checksums of the covered prefix, of the requirements and of the flatten program); then the flattened events of the complete lines up to that offset. Used only when every check matches; on any mismatch (shorter or rewritten transcript, changed requirements, corrupt or unreadable file) it is discarded and rewritten from a full replay, so it never changes a verdict. `HCF_GATE_NO_CACHE=1` neither reads nor writes it. The final verifier never uses it |
 
 ### Exact revert
 

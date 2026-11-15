@@ -764,6 +764,24 @@ assert_contains "it never reverts plan files reached through a symlinked plan di
 ln -s "$VPROJ" "$LROOT/projlink"
 assert_eq "it checks a production path when cwd is a symlink to the project" "WARN $VPROJ/src/Calc.php" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/src/Calc.php" HCF_GATE_CWD="$LROOT/projlink" "$VT" --gate "$TASK" "$VPROJ/disarmed.jsonl")"
 assert_eq "it still recognises a test file through that symlinked cwd" "ALLOW" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/tests/CalcTest.php" HCF_GATE_CWD="$LROOT/projlink" "$VT" --gate "$TASK" "$VPROJ/disarmed.jsonl")"
+assert_eq "it recognises an edited path reached through a symlinked directory as the project's" "WARN $LROOT/projlink/src/Calc.php" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$LROOT/projlink/src/Calc.php" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$VPROJ/disarmed.jsonl")"
+ln -s "$VPROJ" "$LROOT/space link"
+assert_eq "it resolves an edited path whose directory has a space" "WARN $LROOT/space link/src/Calc.php" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$LROOT/space link/src/Calc.php" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$VPROJ/disarmed.jsonl")"
+assert_eq "it skips an edited path whose directory does not exist" "WARN $VPROJ/nodir/Calc.php" "$(HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/nodir/Calc.php" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$VPROJ/disarmed.jsonl")"
+mkdir -p "$LROOT/fakebin"
+for _tool in dirname basename; do
+  printf '#!/bin/sh\necho x >> "$FORK_LOG"\nexec %s "$@"\n' "$(command -v "$_tool")" > "$LROOT/fakebin/$_tool"
+  chmod +x "$LROOT/fakebin/$_tool"
+done
+fork_count() { # <number of distinct edited paths>
+  local i; : > "$LROOT/fork.log"
+  for i in $(seq 1 "$1"); do
+    tx_use Edit "$(jq -cn --arg p "$VPROJ/src/F$i.php" '{file_path:$p, old_string:"a", new_string:"b"}')"; tx_res false ok
+  done > "$LROOT/forks.jsonl"
+  FORK_LOG="$LROOT/fork.log" PATH="$LROOT/fakebin:$PATH" HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/src/Calc.php" HCF_GATE_CWD="$VPROJ" "$VT" --gate "$TASK" "$LROOT/forks.jsonl" > /dev/null
+  wc -l < "$LROOT/fork.log" | tr -d ' '
+}
+assert_eq "it resolves edited paths without a dirname process per path" "$(fork_count 1)" "$(fork_count 10)"
 rm -rf "$LROOT" "$(dirname "$(dirname "$SPROJ")")"
 
 # 12. The guard runs before an earlier call of the same streamed message is in
@@ -811,6 +829,111 @@ assert_eq "it counts a Go test function" "1" "$(count 'func TestAdds(t *testing.
 assert_eq "it counts a Rust #[test]" "1" "$(count '#[test]
 fn adds() {}')"
 assert_eq "it counts it.each, it.only and test.skip" "3" "$(count "it.each([1, 2])('adds %i', (n) => {}); it.only('x', () => {}); test.skip('y', () => {});")"
+
+# --- The incremental event cache: --gate flattens only what was appended ---
+CP="$VPROJ/cache"; mkdir -p "$CP"
+CT="$CP/t.jsonl"; CSC="$CP/w.calls"; CEV="$CP/w.events"
+cgate() { HCF_GATE_SIDECAR="$CSC" gate Edit "$VPROJ/tests/CalcTest.php" 1 "$CT"; }
+# csentinel: a well-formed event line no replay of the transcript produces (a new test nobody ran).
+csentinel() { printf 'USE\tsentinel\tEdit\t%s\t1\t\t%s\t\t\t\t\t\n' "$VPROJ/tests/OtherTest.php" "$VPROJ" >> "$CEV"; }
+{ add_test "adds two numbers"; red "adds two numbers"; edit_src; green; } > "$CT"
+cgate > /dev/null
+csentinel
+green >> "$CT"
+assert_eq "it flattens only the transcript lines appended since the last gate call" "WARN-BATCH $VPROJ/tests/CalcTest.php" "$(cgate)"
+
+# cgen <cycles>: a large synthetic transcript, one jq program: test edits, red and
+# green runs with 25 KB outputs, production edits, Writes, and now and then a test
+# nobody runs.
+cgen() { jq -cn --arg cwd "$VPROJ" --arg d "i""t" --arg q "'" --argjson n "$1" '
+  def use($id; $name; $in): {type:"assistant", cwd:$cwd, message:{content:[{type:"tool_use", id:$id, name:$name, input:$in}]}};
+  def res($id; $out): {type:"user", message:{content:[{type:"tool_result", tool_use_id:$id, is_error:false, content:$out}]}};
+  def pad: ("  . passing case output line\n" * 900);
+  range(0; $n) as $i
+  | (if $i % 2 == 0 then "adds two numbers" else "subtracts two numbers" end) as $name
+  | "c\($i)" as $p
+  | use($p + "a"; "Edit"; {file_path: ($cwd + "/tests/CalcTest.php"), old_string: "", new_string: ($d + "(" + $q + $name + $q + ", function () {});")}), res($p + "a"; "ok"),
+    (if $i % 6 == 2 then empty else
+      use($p + "b"; "Bash"; {command: ("./vendor/bin/pest --filter=\"" + $name + "\" --bail 2>&1 | tail -3")}), res($p + "b"; "FAILED  CalcTest > " + $name + "  Tests: 1 failed\n" + pad) end),
+    use($p + "c"; "Edit"; {file_path: ($cwd + "/src/Calc.php"), old_string: "a", new_string: "b"}), res($p + "c"; "ok"),
+    (if $i % 7 == 3 then use($p + "w"; "Write"; {file_path: ($cwd + "/src/Gen\($i).php"), content: "<?php\n"}), res($p + "w"; "ok") else empty end),
+    use($p + "d"; "Bash"; {command: "./vendor/bin/pest tests --parallel"}), res($p + "d"; "Tests: 3 passed\n" + pad)'; }
+cverdict() { HCF_GATE_TOOL=Edit HCF_GATE_PATH="$VPROJ/src/Calc.php" HCF_GATE_ADDED=0 HCF_GATE_CWD="$VPROJ" "$VT" --gate "$1" "$CP/big-prefix.jsonl"; }
+{ cat "$TASK"; printf '%s\n' '- [ ] `it multiplies two numbers`'; } > "$CP/002-demo.md"
+cgen 42 > "$CP/big.jsonl"
+csize="$(wc -c < "$CP/big.jsonl" | tr -d ' ')"; clines="$(wc -l < "$CP/big.jsonl" | tr -d ' ')"
+cmism=0
+for ck in 1 2 3 4 5 6 7 8 9 10; do
+  # Growing prefixes of one transcript, at the same path: odd ones end on a line, even ones mid-line.
+  if [ $((ck % 2)) -eq 0 ]; then head -c "$((csize * ck / 10))" "$CP/big.jsonl" > "$CP/big-prefix.jsonl"
+  else head -n "$((clines * ck / 10))" "$CP/big.jsonl" > "$CP/big-prefix.jsonl"; fi
+  # The requirements change half way through.
+  ctask="$TASK"; [ "$ck" -ge 6 ] && ctask="$CP/002-demo.md"
+  cached="$(HCF_GATE_SIDECAR="$CP/big.calls" cverdict "$ctask")"
+  full="$(HCF_GATE_NO_CACHE=1 cverdict "$ctask")"
+  [ "$cached" = "$full" ] || cmism=$((cmism + 1))
+done
+assert_eq "it gives the same gate verdict cached and uncached at every prefix of a large transcript" "0" "$cmism"
+
+# A red run whose result line is half written when the first call reads the transcript.
+CPT="$CP/partial.jsonl"
+{ add_test "adds two numbers"; red "adds two numbers"; } > "$CP/partial-full.jsonl"
+{ head -n 3 "$CP/partial-full.jsonl"; tail -n 1 "$CP/partial-full.jsonl" | head -c 20; } > "$CPT"
+cpgate() { HCF_GATE_SIDECAR="$CP/p.calls" gate Edit "$VPROJ/src/Calc.php" 0 "$CPT"; }
+cpgate > /dev/null
+cat "$CP/partial-full.jsonl" > "$CPT"
+assert_eq "it never caches a transcript line that is still being written" "ALLOW" "$(cpgate)"
+
+# cprime <name>: a transcript (a test, its red run, code, green) whose cache one gate
+# call has written, with the sentinel planted in it. A call that reads the cache
+# warns of a batch; one that replays the transcript allows.
+cqgate() { HCF_GATE_SIDECAR="$CP/$1.calls" gate Edit "$VPROJ/tests/CalcTest.php" 1 "$CP/$1.jsonl"; }
+cprime() {
+  { add_test "adds two numbers"; red "adds two numbers"; edit_src; green; } > "$CP/$1.jsonl"
+  cqgate "$1" > /dev/null
+  CEV="$CP/$1.events"; csentinel
+}
+cprime shorter
+head -n 4 "$CP/shorter.jsonl" > "$CP/shorter.cut"; cat "$CP/shorter.cut" > "$CP/shorter.jsonl"
+assert_eq "it replays the whole transcript when it is shorter than the cache" "ALLOW" "$(cqgate shorter)"
+
+# A fresh worker for the same task, same sidecar name: a longer transcript with another beginning.
+cprime rewritten
+{ add_test "subtracts two numbers"; red "subtracts two numbers"; edit_src; green; green; } > "$CP/rewritten.jsonl"
+assert_eq "it replays the whole transcript when the cached prefix no longer matches" "ALLOW" "$(cqgate rewritten)"
+
+# A requirement added mid-run changes which test edits the flatten names.
+cprime reqs
+assert_eq "it replays the whole transcript when the requirements change" "ALLOW" "$(TASK="$CP/002-demo.md" cqgate reqs)"
+
+# An HCF update mid-run: a copy of the verifier whose flatten program differs by a comment.
+cprime flat
+mkdir -p "$CP/hooks2"; cp "$REPO_ROOT/hooks/tdd-context.sh" "$CP/hooks2/"
+sed 's/# 1-based indices of requirements/# 1-based indices of the requirements/' "$VT" > "$CP/hooks2/verify-tdd.sh"; chmod +x "$CP/hooks2/verify-tdd.sh"
+assert_eq "it replays the whole transcript when the flatten program changes" "ALLOW" "$(VT="$CP/hooks2/verify-tdd.sh" cqgate flat)"
+
+# A cache whose first line is not what the verifier wrote: replayed, without a word on stderr.
+cprime corrupt
+{ printf 'v1|not-a-number|1:2|3:4|5:6\n'; tail -n +2 "$CP/corrupt.events"; } > "$CP/corrupt.cut"; cat "$CP/corrupt.cut" > "$CP/corrupt.events"
+assert_eq "it replays the whole transcript when the cache is corrupt" "ALLOW" "$(cqgate corrupt 2>&1)"
+
+# HCF_GATE_NO_CACHE: the transcript grew since the cache was written, and the call neither reads nor rewrites it.
+cprime nocache
+green >> "$CP/nocache.jsonl"
+cbefore="$(cksum < "$CP/nocache.events")"
+cnoread="$(HCF_GATE_NO_CACHE=1 cqgate nocache)"
+assert_eq "it reads and writes no cache when HCF_GATE_NO_CACHE is set" "ALLOW unchanged" "$cnoread $([ "$cbefore" = "$(cksum < "$CP/nocache.events")" ] && echo unchanged || echo rewritten)"
+
+# The guard creates .tdd/ only after it allows the first file change: early calls have a sidecar in a directory that is not there.
+{ add_test "adds two numbers"; red "adds two numbers"; edit_src; green; } > "$CP/nodir.jsonl"
+assert_eq "it gives the full-replay verdict when the cache cannot be written" "ALLOW" "$(HCF_GATE_SIDECAR="$CP/no/such/dir/w.calls" gate Edit "$VPROJ/tests/CalcTest.php" 1 "$CP/nodir.jsonl" 2>&1)"
+
+# The final verifier reads the whole transcript, whatever the environment holds.
+cprime final
+green >> "$CP/final.jsonl"
+cplain="$(verify "$CP/final.jsonl")"; cbefore="$(cksum < "$CP/final.events")"
+cfinal="$(HCF_GATE_SIDECAR="$CP/final.calls" verify "$CP/final.jsonl")"
+assert_eq "it never reads the cache in the final verifier" "$cplain unchanged" "$cfinal $([ "$cbefore" = "$(cksum < "$CP/final.events")" ] && echo unchanged || echo rewritten)"
 
 rm -rf "$VPROJ"
 
@@ -1028,3 +1151,66 @@ assert_eq "it records which transcript holds the task's changes" "$NP/agent-read
 assert_contains "it records the tests each allowed change adds" "$(cat "$NP/.claude/plans/demo/.tdd/001-demo.md.n9.calls" 2>/dev/null)" '"hcf_added":0'
 
 rm -rf "$NP"
+
+# --- HEAD baselines: read only for a Write that needs one, batched ---
+BP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/hcf-base.XXXXXX")" && pwd -P)"
+mkdir -p "$BP/.claude/plans/demo" "$BP/tests" "$BP/bin"
+BTASK="$BP/.claude/plans/demo/001-demo.md"
+printf '# Task 001\n- [ ] `it adds two numbers`\n' > "$BTASK"
+BDECL="i""t"
+# b_tests <n>: n test declarations, assembled so this file holds no literal one.
+b_tests() { local i=0; while [ "$i" -lt "$1" ]; do printf "%s('adds two numbers %s', function () {});\n" "$BDECL" "$i"; i=$((i + 1)); done; }
+b_tests 2 > "$BP/tests/ATest.php"
+for n in 1 2 3 4 5 6; do b_tests 1 > "$BP/tests/F${n}Test.php"; done
+git -C "$BP" init -q
+git -C "$BP" add tests && git -C "$BP" -c user.name=t -c user.email=t@t commit -q -m base
+# A git first on PATH that logs every invocation, then runs the real one.
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\nexec "%s" "$@"\n' "$BP/git.log" "$(command -v git)" > "$BP/bin/git"
+chmod +x "$BP/bin/git"
+_b=0
+b_use() { _b=$((_b + 1)); jq -cn --arg id "b$_b" --arg name "$1" --argjson in "$2" --arg cwd "$BP" \
+  '{type:"assistant", cwd:$cwd, message:{content:[{type:"tool_use", id:$id, name:$name, input:$in}]}}'; }
+# b_res [snapshot]: a result; with an argument it records the file's earlier content.
+b_res() { jq -cn --arg id "b$_b" --arg o "${1-}" --argjson snap "$([ $# -gt 0 ] && echo true || echo false)" \
+  '{type:"user", message:{content:[{type:"tool_result", tool_use_id:$id, is_error:false, content:"ok"}]}} | if $snap then .toolUseResult = {type:"update", originalFile:$o} else . end'; }
+# b_write <file> <tests>: a Write of that many tests to tests/<file>.
+b_write() { b_use Write "$(jq -cn --arg p "$BP/tests/$1" --arg s "$(b_tests "$2")" '{file_path:$p, content:$s}')"; }
+# b_gits <transcript>: how many git processes one verify run starts.
+b_gits() { : > "$BP/git.log"; PATH="$BP/bin:$PATH" "$VT" "$BTASK" "$1" > /dev/null 2>&1; wc -l < "$BP/git.log" | tr -d ' '; }
+{ b_use Edit "$(jq -cn --arg p "$BP/tests/ATest.php" '{file_path:$p, old_string:"a", new_string:"b"}')"; b_res; } > "$BP/no-write.jsonl"
+{ b_write ATest.php 1; b_res ""; } > "$BP/snapshot.jsonl"
+assert_eq "it reads no HEAD baseline when every Write's result records the file's earlier content" "$(b_gits "$BP/no-write.jsonl")" "$(b_gits "$BP/snapshot.jsonl")"
+{ b_write ATest.php 1 | jq -c '.hcf_added = 0'; b_res; } > "$BP/counted.jsonl"
+assert_eq "it reads no HEAD baseline for a Write the guard recorded a test count for" "$(b_gits "$BP/no-write.jsonl")" "$(b_gits "$BP/counted.jsonl")"
+b_write ATest.php 1 > "$BP/pending.jsonl"
+b_more() { [ "$(b_gits "$1")" -gt "$(b_gits "$BP/no-write.jsonl")" ] && echo more || echo same; }
+assert_eq "it reads the HEAD baseline for a Write that has no result yet" "more" "$(b_more "$BP/pending.jsonl")"
+for n in 1 2 3 4 5 6; do b_write "F${n}Test.php" 1; done > "$BP/six.jsonl"
+assert_eq "it reads every Written file's HEAD baseline with one git process" "$(b_gits "$BP/pending.jsonl")" "$(b_gits "$BP/six.jsonl")"
+# b_fail: a failing run's result. b_added <transcript>: the tests the Write is judged to add (R3 names them).
+b_fail() { jq -cn --arg id "b$_b" '{type:"user", message:{content:[{type:"tool_result", tool_use_id:$id, is_error:false, content:"FAILED  CalcTest > it adds two numbers  Tests: 1 failed"}]}}'; }
+b_run() { b_use Bash "$(jq -cn --arg c './vendor/bin/pest --filter="it adds two numbers"' '{command:$c}')"; b_fail; }
+b_added() { "$VT" "$BTASK" "$1" 2>&1 | grep -o 'R3 [0-9]* new tests' | head -1; }
+{ b_write ATest.php 4; b_res; b_run; } > "$BP/over-head.jsonl"
+assert_eq "it counts the tests a file held at HEAD for a Write with no snapshot" "R3 2 new tests" "$(b_added "$BP/over-head.jsonl")"
+{ b_write NewTest.php 3; b_res; b_run; } > "$BP/not-at-head.jsonl"
+assert_eq "it counts no HEAD tests for a Written file that is not at HEAD" "R3 3 new tests" "$(b_added "$BP/not-at-head.jsonl")"
+{ b_write ATest.php 4; b_res; b_write F1Test.php 1; b_res; b_run; } > "$BP/together.jsonl"
+assert_eq "it gives each Written file its own HEAD baseline when several are read together" "R3 2 new tests" "$(b_added "$BP/together.jsonl")"
+{ printf '// ✓ — ✓ —\n'; b_tests 2; } > "$BP/tests/MbTest.php"
+git -C "$BP" add tests && git -C "$BP" -c user.name=t -c user.email=t@t commit -q -m multibyte
+{ b_write MbTest.php 4; b_res; b_run; } > "$BP/multibyte.jsonl"
+assert_eq "it counts the HEAD tests of a file that holds multi-byte characters" "R3 2 new tests" "$(b_added "$BP/multibyte.jsonl")"
+mkdir -p "$BP/tests/my dir"; b_tests 2 > "$BP/tests/my dir/Spaced Test.php"
+git -C "$BP" add tests && git -C "$BP" -c user.name=t -c user.email=t@t commit -q -m spaced
+{ b_write "my dir/Spaced Test.php" 4; b_res; b_run; } > "$BP/spaced.jsonl"
+assert_eq "it reads the HEAD baseline of a Written file whose path has a space" "R3 2 new tests" "$(b_added "$BP/spaced.jsonl")"
+mkdir -p "$BP/vendored/tests"; git -C "$BP/vendored" init -q; b_tests 2 > "$BP/vendored/tests/NestedTest.php"
+git -C "$BP/vendored" add tests && git -C "$BP/vendored" -c user.name=t -c user.email=t@t commit -q -m nested
+{ b_use Write "$(jq -cn --arg p "$BP/vendored/tests/NestedTest.php" --arg s "$(b_tests 4)" '{file_path:$p, content:$s}')"; b_res; b_run; } > "$BP/nested.jsonl"
+assert_eq "it reads the HEAD baseline of a Written file in a nested repository from that repository" "R3 2 new tests" "$(b_added "$BP/nested.jsonl")"
+OP="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/hcf-nogit.XXXXXX")" && pwd -P)"
+mkdir -p "$OP/.claude/plans/demo" "$OP/tests"; cp "$BTASK" "$OP/.claude/plans/demo/001-demo.md"
+{ BP_SAVED="$BP"; BP="$OP"; b_write ATest.php 3; b_res; b_run; BP="$BP_SAVED"; } > "$OP/no-repo.jsonl"
+assert_eq "it counts no HEAD tests for a Written file outside any git repository" "R3 3 new tests" "$("$VT" "$OP/.claude/plans/demo/001-demo.md" "$OP/no-repo.jsonl" 2>&1 | grep -o 'R3 [0-9]* new tests' | head -1)"
+rm -rf "$BP" "$OP"

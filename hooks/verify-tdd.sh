@@ -17,7 +17,11 @@
 #   removal-only Edit or MultiEdit, see --removal-only) and HCF_GATE_ID (the
 #   call's tool_use_id), and HCF_GATE_SIDECAR (calls the guard already
 #   allowed, as transcript tool_use lines, read after the transcript: they
-#   count even before the transcript holds them). The transcript is still
+#   count even before the transcript holds them). With a sidecar, --gate
+#   also keeps an event cache beside it (<sidecar minus .calls>.events) so
+#   each call flattens only the transcript lines appended since the last;
+#   any mismatch means a full replay, and HCF_GATE_NO_CACHE=1 skips the cache
+#   entirely. The transcript is still
 #   being written while the guard reads it: tools from one streamed message run back to back, so an earlier
 #   call's result, or the last line itself, may not be on disk yet. --gate
 #   therefore skips lines that do not parse and counts every earlier file edit
@@ -387,8 +391,8 @@ jq -Rr "$cmd_defs"'name_norm' < "$tmp/reqs" > "$tmp/reqnorm"
 # every other mode reads a finished transcript and rejects a broken one.
 jq_raw=""; jq_parse=""
 if [ "$mode" = "gate" ]; then jq_raw="-R"; jq_parse="fromjson? | "; fi
-# shellcheck disable=SC2086  # $jq_raw is empty or one flag
-if ! events="$(jq $jq_raw -r --rawfile reqnorm "$tmp/reqnorm" "$removal_defs$cmd_defs"'
+# shellcheck disable=SC2016  # jq variables, not shell ones
+flatten_prog='
   # A normalised name as a regex over source text: its words in order, in any
   # case, joined by nothing (camelCase) or by non-word characters (snake_case,
   # prose), starting and ending at a word boundary. Matching source this way
@@ -442,14 +446,52 @@ if ! events="$(jq $jq_raw -r --rawfile reqnorm "$tmp/reqnorm" "$removal_defs$cmd
            elif ($tur.originalFile | type) == "string" then ($tur.originalFile | ntests | tostring) else "" end)
         ] | @tsv
     else empty end
-' < <(
-  cat "$transcript"
-  # --gate: calls the guard already allowed may not be in the transcript yet
-  # (it lags behind tools streamed in one message). They follow, as the
-  # latest calls; one already in the transcript is the same call again.
+'
+# The flatten of the JSONL on stdin.
+# shellcheck disable=SC2086  # $jq_raw is empty or one flag
+flatten() { jq $jq_raw -r --rawfile reqnorm "$tmp/reqnorm" "$removal_defs$cmd_defs$flatten_prog" 2>/dev/null; }
+# --gate: calls the guard already allowed may not be in the transcript yet
+# (it lags behind tools streamed in one message). They follow, as the
+# latest calls; one already in the transcript is the same call again.
+sidecar_lines() {
   if [ "$mode" = "gate" ] && [ -n "${HCF_GATE_SIDECAR:-}" ] && [ -r "${HCF_GATE_SIDECAR:-}" ]; then
     printf '\n'; cat "$HCF_GATE_SIDECAR"
-  fi) 2>/dev/null)"; then
+  fi
+}
+cache_file=""
+[ "$mode" = "gate" ] && [ -n "${HCF_GATE_SIDECAR:-}" ] && [ -z "${HCF_GATE_NO_CACHE:-}" ] && cache_file="${HCF_GATE_SIDECAR%.calls}.events"
+if [ -n "$cache_file" ]; then
+  # The cache: its first line says what the rest, the flattened events of the
+  # first <offset> bytes, was made from (cache_meta); only the bytes appended
+  # since are flattened. A cache that does not match is not used.
+  # BSD head rejects -c 0.
+  first_bytes() { if [ "$1" -gt 0 ]; then head -c "$1" "${@:2}"; fi; }
+  prog_sum="$(printf '%s' "$removal_defs$cmd_defs$flatten_prog" | cksum | tr ' ' :)"
+  cache_meta() { printf 'v1|%s|%s|%s|%s' "$1" "$(first_bytes "$1" "$transcript" | cksum | tr ' ' :)" "$(cksum < "$tmp/reqnorm" | tr ' ' :)" "$prog_sum"; }
+  offset=0
+  : > "$tmp/cached"
+  # Only complete, newline-terminated lines are cached: the last line may be
+  # half written, and its rest would otherwise be read from the middle.
+  end="$(wc -c < "$transcript" | tr -d ' ')"
+  [ -z "$(tail -c 1 "$transcript")" ] || end=$((end - $(tail -n 1 "$transcript" | wc -c)))
+  if [ -r "$cache_file" ]; then
+    offset="$(head -n 1 "$cache_file" | cut -d'|' -f2)"
+    case "$offset" in
+      ''|*[!0-9]*) offset=0 ;;
+      *) if [ "$offset" -le "$end" ] && [ "$(head -n 1 "$cache_file")" = "$(cache_meta "$offset")" ]; then
+           tail -n +2 "$cache_file" > "$tmp/cached"
+         else
+           offset=0
+         fi ;;
+    esac
+  fi
+  tail -c "+$((offset + 1))" "$transcript" | first_bytes "$((end - offset))" | flatten > "$tmp/fresh"
+  # One mv replaces metadata and events together, so a parallel run never reads
+  # a half-written cache. A cache that cannot be written (its directory may not
+  # exist yet) is no reason to refuse or to say a word: the verdict is the same.
+  { { cache_meta "$end"; printf '\n'; cat "$tmp/cached" "$tmp/fresh"; } > "$cache_file.tmp.$$" && mv "$cache_file.tmp.$$" "$cache_file" || rm -f "$cache_file.tmp.$$"; } 2>/dev/null
+  events="$({ cat "$tmp/cached" "$tmp/fresh"; { tail -c "+$((end + 1))" "$transcript"; sidecar_lines; } | flatten; })"
+elif ! events="$({ cat "$transcript"; sidecar_lines; } | flatten)"; then
   printf 'verify-tdd: error: %s is not a readable JSONL transcript\n' "$transcript" >&2
   exit 3
 fi
@@ -476,14 +518,97 @@ baseline_tests() {
     | jq -Rs "$removal_defs"'ntests' 2>/dev/null \
     || true
 }
-# A path with symlinks in its directory resolved, or nothing when it is the same.
-real_of() {
-  local d
-  d="$(cd "$(dirname "$1")" 2>/dev/null && pwd -P)" || return 0
-  [ "$d/$(basename "$1")" != "$1" ] && printf '%s/%s' "$d" "$(basename "$1")"
+# Does path $1 belong to this worktree's own repository, with no git process?
+# Sets fast_rel to its path under the repository. A path through a nested
+# repository (a .git entry in a directory between it and the root), a symlinked
+# directory or a directory that does not exist takes baseline_tests instead,
+# so its result is the one it always had.
+own_rel() {
+  local p="$1" root d
+  fast_rel=""
+  for root in "$own_root" "${own_real:-}"; do
+    [ -n "$root" ] || continue
+    case "$p" in "$root"/?*) ;; *) continue ;; esac
+    d="${p%/*}"
+    [ -d "$d" ] || return 1
+    while [ "$d" != "$root" ]; do
+      if [ -L "$d" ] || [ -e "$d/.git" ]; then return 1; fi
+      d="${d%/*}"
+    done
+    fast_rel="${p#"$root"/}"
+    return 0
+  done
+  return 1
+}
+# BASE lines for the paths in own_paths/own_rels (one repository): which of
+# them exist at HEAD from one git cat-file --batch-check, those extracted
+# from one git archive into files of their own, their tests counted by one jq
+# pass. Blobs go to files because git sizes them in bytes and jq counts
+# characters, so no stream of them can be split by size.
+own_baselines() {
+  local work i line n="${#own_paths[@]}" present=()
+  work="$(mktemp -d "$tmp/base.XXXXXX")" || return 1
+  printf 'HEAD:%s\n' "${own_rels[@]}" | git -C "$own_root" cat-file --batch-check > "$work/check" 2>/dev/null || return 1
+  i=0
+  while IFS= read -r line; do
+    case "$line" in *" blob "*) present+=("${own_rels[$i]}") ;; esac
+    i=$((i + 1))
+  done < "$work/check"
+  : > "$work/counts"
+  if [ "${#present[@]}" -gt 0 ]; then
+    mkdir "$work/tree"
+    git -C "$own_root" --literal-pathspecs archive HEAD -- "${present[@]}" > "$work/tree.tar" 2>/dev/null || return 1
+    tar -x -f "$work/tree.tar" -C "$work/tree" || return 1
+    ( cd "$work/tree" && jq -Rrn "$removal_defs"'
+        [inputs | {f: input_filename, l: .}] | group_by(.f)[]
+        | "\(.[0].f)\t\(map(.l) | join("\n") | ntests)"' "${present[@]}" ) > "$work/counts" 2>/dev/null || return 1
+  fi
+  i=0
+  while [ "$i" -lt "$n" ]; do printf '%s\t%s\n' "${own_paths[$i]}" "${own_rels[$i]}"; i=$((i + 1)); done > "$work/pairs"
+  LC_ALL=C awk -F'\t' '
+    FNR == NR { c[$1] = $2; next }
+    { print "BASE\t" $1 "\t" (($2 in c) ? c[$2] : 0) }' "$work/counts" "$work/pairs"
+}
+# BASE lines for the paths on stdin: the ones in this worktree's repository
+# together, the others one by one.
+baseline_lines() {
+  local p own_paths=() own_rels=() i
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if own_rel "$p"; then own_paths+=("$p"); own_rels+=("$fast_rel")
+    else printf 'BASE\t%s\t%s\n' "$p" "$(baseline_tests "$p")"; fi
+  done
+  [ "${#own_paths[@]}" -gt 0 ] || return 0
+  own_baselines && return 0
+  for i in "${!own_paths[@]}"; do printf 'BASE\t%s\t%s\n' "${own_paths[$i]}" "$(baseline_tests "${own_paths[$i]}")"; done
+}
+# Paths (stdin) printed as "REAL <path> <resolved>" when a symlink in the
+# directory changes them, and nothing when the directory does not exist. One
+# shell does all the cd's: a command substitution per path costs a fork each.
+# Callers run it in a pipeline, so the cd's never leak into the caller.
+emit_real_paths() {
+  local start="$PWD" p d b
+  unset CDPATH
+  while IFS= read -r p; do
+    case "$p" in */*) d="${p%/*}"; [ -n "$d" ] || d=/ ;; *) d=. ;; esac
+    b="${p##*/}"
+    cd -- "$start" || return 0
+    cd -P -- "$d" >/dev/null 2>&1 || continue
+    [ "$PWD/$b" != "$p" ] && printf 'REAL\t%s\t%s/%s\n' "$p" "$PWD" "$b"
+  done
   return 0
 }
-real_dir() { (cd "$1" 2>/dev/null && pwd -P) || true; }
+# Same for working directories: "CWD <cwd> <resolved>" when it differs.
+emit_real_cwds() {
+  local start="$PWD" c
+  unset CDPATH
+  while IFS= read -r c; do
+    cd -- "$start" || return 0
+    cd -P -- "$c" >/dev/null 2>&1 || continue
+    [ "$PWD" != "$c" ] && printf 'CWD\t%s\t%s\n' "$c" "$PWD"
+  done
+  return 0
+}
 
 LC_ALL=C awk -F'\t' \
   -v tmp="$tmp" \
@@ -1194,16 +1319,13 @@ END {
   # pass can subtract tests the file already had; and the symlink-resolved
   # form of every edited path and cwd, so a path reached through a symlink is
   # still recognised as the project's or the plan's.
-  printf '%s\n' "$events" | LC_ALL=C awk -F'\t' '$1 == "USE" && $3 == "Write" { print $4 }' | LC_ALL=C sort -u | while IFS= read -r p; do
-    [ -n "$p" ] && printf 'BASE\t%s\t%s\n' "$p" "$(baseline_tests "$p")"
-  done
+  printf '%s\n' "$events" | LC_ALL=C awk -F'\t' '
+    $1 == "USE" && $3 == "Write" && $5 ~ /^W/ { want[$2] = $4; ids[++n] = $2 }
+    $1 == "RES" && $9 != "" { snap[$2] = 1 }
+    END { for (i = 1; i <= n; i++) if (!(ids[i] in snap)) print want[ids[i]] }' | LC_ALL=C sort -u | baseline_lines
   { printf '%s\n' "$events" | LC_ALL=C awk -F'\t' '$1 == "USE" && $4 != "" { print $4 }'
-    [ -n "${HCF_GATE_PATH:-}" ] && printf '%s\n' "$HCF_GATE_PATH"; } | LC_ALL=C sort -u | while IFS= read -r p; do
-    r="$(real_of "$p")"; [ -n "$r" ] && printf 'REAL\t%s\t%s\n' "$p" "$r"
-  done
+    [ -n "${HCF_GATE_PATH:-}" ] && printf '%s\n' "$HCF_GATE_PATH"; } | LC_ALL=C sort -u | emit_real_paths
   { printf '%s\n' "$events" | LC_ALL=C awk -F'\t' '$1 == "USE" && $7 != "" { print $7 }'
-    [ -n "${HCF_GATE_CWD:-}" ] && printf '%s\n' "$HCF_GATE_CWD"; } | LC_ALL=C sort -u | while IFS= read -r c; do
-    r="$(real_dir "$c")"; [ -n "$r" ] && [ "$r" != "$c" ] && printf 'CWD\t%s\t%s\n' "$c" "$r"
-  done
+    [ -n "${HCF_GATE_CWD:-}" ] && printf '%s\n' "$HCF_GATE_CWD"; } | LC_ALL=C sort -u | emit_real_cwds
   printf '%s\n' "$events"
 )

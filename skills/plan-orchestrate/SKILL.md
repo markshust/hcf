@@ -445,7 +445,7 @@ it keeps its work and its records):
 4. **Reset the task file:** untick every requirement and clear its
    Implementation Notes (keep its retry count).
 5. **Delete the records**, so Step 6 can never read an old verdict:
-   `rm -f "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md.verdict" "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md.transcript" "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md".*.calls && rm -rf "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md".*.pre`
+   `rm -f "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md.verdict" "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md.transcript" "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md".*.calls "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md".*.events && rm -rf "$PLANS_DIR/{plan-name}/.tdd/{task-file}.md".*.pre`
    (the `.pre` folders hold the edit guard's copies of each file from before a
    worker's first change; `revert-task.sh` reads them, so delete them only
    after the revert)
@@ -587,7 +587,7 @@ not built test-first is not kept, even if its tests pass.
 3. Reset the task file: uncheck its requirements, clear its Implementation
    Notes, and delete its records (`.tdd/<task file name>.verdict`,
    `.tdd/<task file name>.transcript`, the `.tdd/<task file name>.*.calls`
-   sidecars and the `.tdd/<task file name>.*.pre` folders), so the clean start
+   sidecars, the `.tdd/<task file name>.*.events` caches and the `.tdd/<task file name>.*.pre` folders), so the clean start
    in Step 5 finds nothing left to undo.
 4. Handle it as **TASK_FAILED** below with the reason `TDD verification failed`
    and the verdict's violation lines in the log.
