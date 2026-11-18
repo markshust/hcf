@@ -340,6 +340,7 @@ Next steps:
 2. Customize the pipeline by enrolling agents via frontmatter — set a `phase` on an agent in .claude/agents/ to add a gate, or remove a `phase` to drop one (see HOOKS.md)
 3. Describe a feature to start planning: "Help me implement..."
 4. The plan-create skill will auto-trigger to help you plan
+5. Optional: run /hcf:statusline to see a running plan's progress in your statusline
 ```
 
 ## Error Handling
