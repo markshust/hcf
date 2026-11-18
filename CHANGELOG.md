@@ -4,6 +4,8 @@ All notable changes to HCF are documented here. Format follows [Keep a Changelog
 
 ## [Unreleased]
 
+## [2.5.0] — 2026-11-18
+
 ### Added
 - **Plan progress in the statusline.** `/hcf:statusline` adds a colored `Plan: N%` to the Claude Code statusline while a plan is `in_progress`. Completed tasks count fully and each running task counts by the share of requirements its TDD worker has ticked, so the number moves during a task rather than jumping when one finishes. It reads the checkout the session is in, so a run in a worktree shows that worktree's plan. It reads `Context: 15% · Plan: 60%`: with no statusline configured, HCF's own shows context and plan; an existing statusline is kept, with the plan placed right after its `Context: N%` (or at the end of its first line if it has none). The skill also sets `refreshInterval`, because an orchestrator waiting on background workers produces no events to redraw the statusline. `settings.json` points at a stable shim in `~/.claude`, not at the versioned plugin path, so plugin updates don't break it. A one-time SessionStart tip mentions the command after install.
 
@@ -143,7 +145,8 @@ Initial public release.
 - **GitHub issue linking** — `plan-create` captures issue references (`Closes #N`, `Relates to #N`) and `plan-orchestrate` includes them in PR bodies for auto-close on merge.
 - MIT license.
 
-[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.4.0...HEAD
+[Unreleased]: https://github.com/markshust/hcf/compare/hcf--v2.5.0...HEAD
+[2.5.0]: https://github.com/markshust/hcf/compare/hcf--v2.4.0...hcf--v2.5.0
 [2.4.0]: https://github.com/markshust/hcf/compare/hcf--v2.3.1...hcf--v2.4.0
 [2.3.1]: https://github.com/markshust/hcf/compare/hcf--v2.3.0...hcf--v2.3.1
 [2.3.0]: https://github.com/markshust/hcf/compare/hcf--v2.2.0...hcf--v2.3.0
